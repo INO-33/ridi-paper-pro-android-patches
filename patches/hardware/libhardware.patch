@@ -1,0 +1,81 @@
+diff --git a/include/hardware/ridi_eink.h b/include/hardware/ridi_eink.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..2c851420e162da3ca46d6762183e44e0b110860c
+--- /dev/null
++++ b/include/hardware/ridi_eink.h
+@@ -0,0 +1,39 @@
++/*
++ * RIDI E70Q10 sleep-transition-only E Ink extension.
++ *
++ * This is deliberately not a general compositor interface. The ARGB buffer is
++ * pre-scaled to its destination size and contains explicit straight A,R,G,B
++ * bytes so neither Skia nor vendor pixel-layout assumptions cross this ABI.
++ */
++#ifndef ANDROID_INCLUDE_HARDWARE_RIDI_EINK_H
++#define ANDROID_INCLUDE_HARDWARE_RIDI_EINK_H
++
++#include <stdint.h>
++
++enum {
++    RIDI_EINK_EXTENSION_GET_SLEEP_SUBMIT_SEQUENCE = 1,
++    RIDI_EINK_EXTENSION_SUBMIT_SLEEP_OVERLAY = 2,
++};
++
++enum {
++    RIDI_EINK_SLEEP_OVERLAY_VERSION = 1,
++    RIDI_EINK_SLEEP_OVERLAY_STRAIGHT_ARGB = 1 << 0,
++};
++
++struct ridi_eink_sleep_overlay {
++    uint32_t version;
++    int32_t fd;
++    int32_t width;
++    int32_t height;
++    int32_t stride_bytes;
++    int32_t alpha_left;
++    int32_t alpha_top;
++    int32_t alpha_right;
++    int32_t alpha_bottom;
++    int32_t dst_left;
++    int32_t dst_top;
++    int32_t sequence;
++    uint32_t flags;
++};
++
++#endif  // ANDROID_INCLUDE_HARDWARE_RIDI_EINK_H
+diff --git a/modules/gralloc/framebuffer.cpp b/modules/gralloc/framebuffer.cpp
+index 7ef8098df1dfcba1617fa9a08a46abe2cf15d704..c974a55cc5f199f48d28b38d8bd59b47633305c6 100644
+--- a/modules/gralloc/framebuffer.cpp
++++ b/modules/gralloc/framebuffer.cpp
+@@ -25,6 +25,7 @@
+ #include <cutils/ashmem.h>
+ #include <cutils/atomic.h>
+ #include <log/log.h>
++#include <cutils/properties.h>
+ 
+ #include <hardware/gralloc.h>
+ #include <hardware/hardware.h>
+@@ -283,7 +284,22 @@ int mapFrameBufferLocked(struct private_module_t* module)
+     size_t fbSize = roundUpToPageSize(finfo.line_length * info.yres_virtual);
+     module->framebuffer = new private_handle_t(dup(fd), fbSize, 0);
+ 
+-    module->numBuffers = info.yres_virtual / info.yres;
++    /*
++     * The ARM PAPER emulator runs gralloc.default behind the HIDL allocator
++     * service.  A direct framebuffer handle carries a process-local `base`
++     * pointer, so exposing those handles to SurfaceFlinger is invalid even
++     * though the framebuffer itself mapped successfully in the allocator
++     * process.  Select the existing AOSP software-copy contract for the
++     * emulator-only no-GPU profiles; physical products retain normal page
++     * flipping and direct framebuffer handles.
++     */
++    const bool paperSoftwareCopy = property_get_bool(
++            "qemu.paper.software_fb", false);
++    module->numBuffers = paperSoftwareCopy ? 1 :
++            info.yres_virtual / info.yres;
++    ALOGI("framebuffer buffers=%u actual_virtual=%u software_copy=%d",
++            module->numBuffers, info.yres_virtual,
++            paperSoftwareCopy ? 1 : 0);
+     module->bufferMask = 0;
+ 
+     void* vaddr = mmap(0, fbSize, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);

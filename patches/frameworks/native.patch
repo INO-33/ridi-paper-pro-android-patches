@@ -1,0 +1,2170 @@
+diff --git a/libs/gui/BufferItem.cpp b/libs/gui/BufferItem.cpp
+index 69b5962441f1d56219cf05a3ebacf4c759be293b..7c1f073f95e2ce341c864e40871e63b5167a68b9 100644
+--- a/libs/gui/BufferItem.cpp
++++ b/libs/gui/BufferItem.cpp
+@@ -53,6 +53,7 @@ BufferItem::BufferItem() :
+     mAcquireCalled(false),
+     mTransformToDisplayInverse(false),
+     mSurfaceDamage(),
++    mEinkUpdateMode(-1),
+     mAutoRefresh(false),
+     mQueuedBuffer(true),
+     mIsStale(false) {
+@@ -81,6 +82,7 @@ size_t BufferItem::getPodSize() const {
+     addAligned(size, mIsDroppable);
+     addAligned(size, mAcquireCalled);
+     addAligned(size, mTransformToDisplayInverse);
++    addAligned(size, mEinkUpdateMode);
+     addAligned(size, mAutoRefresh);
+     addAligned(size, mQueuedBuffer);
+     addAligned(size, mIsStale);
+@@ -169,6 +171,7 @@ status_t BufferItem::flatten(
+     writeAligned(buffer, size, mIsDroppable);
+     writeAligned(buffer, size, mAcquireCalled);
+     writeAligned(buffer, size, mTransformToDisplayInverse);
++    writeAligned(buffer, size, mEinkUpdateMode);
+     writeAligned(buffer, size, mAutoRefresh);
+     writeAligned(buffer, size, mQueuedBuffer);
+     writeAligned(buffer, size, mIsStale);
+@@ -235,6 +238,7 @@ status_t BufferItem::unflatten(
+     readAligned(buffer, size, mIsDroppable);
+     readAligned(buffer, size, mAcquireCalled);
+     readAligned(buffer, size, mTransformToDisplayInverse);
++    readAligned(buffer, size, mEinkUpdateMode);
+     readAligned(buffer, size, mAutoRefresh);
+     readAligned(buffer, size, mQueuedBuffer);
+     readAligned(buffer, size, mIsStale);
+diff --git a/libs/gui/BufferQueueProducer.cpp b/libs/gui/BufferQueueProducer.cpp
+index 3d94a029e57a7440f1782685e3eb019289e41bee..00c44f2885935d461aba5650256d085e1e184cca 100644
+--- a/libs/gui/BufferQueueProducer.cpp
++++ b/libs/gui/BufferQueueProducer.cpp
+@@ -15,6 +15,7 @@
+  */
+ 
+ #include <inttypes.h>
++#include <cstring>
+ 
+ #define LOG_TAG "BufferQueueProducer"
+ #define ATRACE_TAG ATRACE_TAG_GRAPHICS
+@@ -45,6 +46,10 @@ namespace android {
+ 
+ static constexpr uint32_t BQ_LAYER_COUNT = 1;
+ 
++static bool isFramebufferSurface(const String8& name) {
++    return !std::strcmp(name.string(), "FramebufferSurface");
++}
++
+ BufferQueueProducer::BufferQueueProducer(const sp<BufferQueueCore>& core,
+         bool consumerIsSurfaceFlinger) :
+     mCore(core),
+@@ -453,6 +458,27 @@ status_t BufferQueueProducer::dequeueBuffer(int *outSlot,
+         if ((buffer == NULL) ||
+                 buffer->needsReallocation(width, height, format, BQ_LAYER_COUNT, usage))
+         {
++            if (isFramebufferSurface(mConsumerName)) {
++                BQ_LOGI("E70Q10_FBQUEUE allocation slot=%d reason=%s "
++                        "request=%ux%u format=%#x usage=%#" PRIx64
++                        " generation=%u old=%ux%u old_format=%#x "
++                        "old_usage=%#" PRIx64 " old_generation=%u "
++                        "max_count=%d min_undequeued=%d max_dequeued=%d "
++                        "active=%zu free_buffers=%zu free_slots=%zu",
++                        found, buffer == NULL ? "empty-slot" : "reallocation",
++                        width, height, format, usage,
++                        mCore->mGenerationNumber,
++                        buffer == NULL ? 0 : buffer->getWidth(),
++                        buffer == NULL ? 0 : buffer->getHeight(),
++                        buffer == NULL ? 0 : buffer->getPixelFormat(),
++                        buffer == NULL ? 0 : buffer->getUsage(),
++                        buffer == NULL ? 0 : buffer->getGenerationNumber(),
++                        mCore->getMaxBufferCountLocked(),
++                        mCore->getMinUndequeuedBufferCountLocked(),
++                        mCore->mMaxDequeuedBufferCount,
++                        mCore->mActiveBuffers.size(),
++                        mCore->mFreeBuffers.size(), mCore->mFreeSlots.size());
++            }
+             mSlots[found].mAcquireCalled = false;
+             mSlots[found].mGraphicBuffer = NULL;
+             mSlots[found].mRequestBufferCalled = false;
+@@ -523,6 +549,14 @@ status_t BufferQueueProducer::dequeueBuffer(int *outSlot,
+                 return error;
+             }
+ 
++            if (isFramebufferSurface(mConsumerName)) {
++                BQ_LOGI("E70Q10_FBQUEUE allocation-complete slot=%d "
++                        "handle=%p stride=%u generation=%u",
++                        *outSlot, graphicBuffer->handle,
++                        graphicBuffer->getStride(),
++                        graphicBuffer->getGenerationNumber());
++            }
++
+             if (mCore->mIsAbandoned) {
+                 mCore->mFreeSlots.insert(*outSlot);
+                 mCore->clearBufferSlotLocked(*outSlot);
+@@ -762,6 +796,7 @@ status_t BufferQueueProducer::queueBuffer(int slot,
+             &crop, &scalingMode, &transform, &acquireFence, &stickyTransform,
+             &getFrameTimestamps);
+     Region surfaceDamage = input.getSurfaceDamage();
++    const int32_t einkUpdateMode = input.getEinkUpdateMode();
+ 
+     if (acquireFence == NULL) {
+         BQ_LOGE("queueBuffer: fence is NULL");
+@@ -871,6 +906,7 @@ status_t BufferQueueProducer::queueBuffer(int slot,
+                 mCore->mDequeueBufferCannotBlock ||
+                 (mCore->mSharedBufferMode && mCore->mSharedBufferSlot == slot);
+         item.mSurfaceDamage = surfaceDamage;
++        item.mEinkUpdateMode = einkUpdateMode;
+         item.mQueuedBuffer = true;
+         item.mAutoRefresh = mCore->mSharedBufferMode && mCore->mAutoRefresh;
+ 
+@@ -1210,6 +1246,17 @@ status_t BufferQueueProducer::connect(const sp<IProducerListener>& listener,
+     }
+ 
+     mCore->mAllowAllocation = true;
++    if (isFramebufferSurface(mConsumerName)) {
++        BQ_LOGI("E70Q10_FBQUEUE connect api=%d max_count=%d "
++                "min_undequeued=%d max_acquired=%d max_dequeued=%d "
++                "async=%d cannot_block=%d generation=%u",
++                api, mCore->getMaxBufferCountLocked(),
++                mCore->getMinUndequeuedBufferCountLocked(),
++                mCore->mMaxAcquiredBufferCount,
++                mCore->mMaxDequeuedBufferCount, mCore->mAsyncMode,
++                mCore->mDequeueBufferCannotBlock,
++                mCore->mGenerationNumber);
++    }
+     VALIDATE_CONSISTENCY();
+     return status;
+ }
+@@ -1344,6 +1391,19 @@ void BufferQueueProducer::allocateBuffers(uint32_t width, uint32_t height,
+             allocFormat = format != 0 ? format : mCore->mDefaultBufferFormat;
+             allocUsage = usage | mCore->mConsumerUsageBits;
+ 
++            if (isFramebufferSurface(mConsumerName)) {
++                BQ_LOGI("E70Q10_FBQUEUE preallocate count=%zu request=%ux%u "
++                        "format=%#x usage=%#" PRIx64 " generation=%u "
++                        "max_count=%d min_undequeued=%d max_acquired=%d "
++                        "max_dequeued=%d",
++                        newBufferCount, allocWidth, allocHeight, allocFormat,
++                        allocUsage, mCore->mGenerationNumber,
++                        mCore->getMaxBufferCountLocked(),
++                        mCore->getMinUndequeuedBufferCountLocked(),
++                        mCore->mMaxAcquiredBufferCount,
++                        mCore->mMaxDequeuedBufferCount);
++            }
++
+             mCore->mIsAllocating = true;
+         } // Autolock scope
+ 
+@@ -1399,6 +1459,13 @@ void BufferQueueProducer::allocateBuffers(uint32_t width, uint32_t height,
+ 
+                 BQ_LOGV("allocateBuffers: allocated a new buffer in slot %d",
+                         *slot);
++                if (isFramebufferSurface(mConsumerName)) {
++                    BQ_LOGI("E70Q10_FBQUEUE preallocate-complete slot=%d "
++                            "handle=%p stride=%u generation=%u",
++                            *slot, buffers[i]->handle,
++                            buffers[i]->getStride(),
++                            buffers[i]->getGenerationNumber());
++                }
+ 
+                 // Make sure the erase is done after all uses of the slot
+                 // iterator since it will be invalid after this point.
+@@ -1426,6 +1493,11 @@ status_t BufferQueueProducer::setGenerationNumber(uint32_t generationNumber) {
+     BQ_LOGV("setGenerationNumber: %u", generationNumber);
+ 
+     Mutex::Autolock lock(mCore->mMutex);
++    if (isFramebufferSurface(mConsumerName) &&
++            generationNumber != mCore->mGenerationNumber) {
++        BQ_LOGW("E70Q10_FBQUEUE generation-change old=%u new=%u",
++                mCore->mGenerationNumber, generationNumber);
++    }
+     mCore->mGenerationNumber = generationNumber;
+     return NO_ERROR;
+ }
+diff --git a/libs/gui/IGraphicBufferProducer.cpp b/libs/gui/IGraphicBufferProducer.cpp
+index 1b0fe068107652b813692e68cde28f3813b7d6f6..c38f47468f9c7a0f8d846e569b9d9ef7aac77f52 100644
+--- a/libs/gui/IGraphicBufferProducer.cpp
++++ b/libs/gui/IGraphicBufferProducer.cpp
+@@ -895,6 +895,7 @@ constexpr size_t IGraphicBufferProducer::QueueBufferInput::minFlattenedSize() {
+             sizeof(scalingMode) +
+             sizeof(transform) +
+             sizeof(stickyTransform) +
++            sizeof(einkUpdateMode) +
+             sizeof(getFrameTimestamps);
+ }
+ 
+@@ -922,6 +923,7 @@ status_t IGraphicBufferProducer::QueueBufferInput::flatten(
+     FlattenableUtils::write(buffer, size, scalingMode);
+     FlattenableUtils::write(buffer, size, transform);
+     FlattenableUtils::write(buffer, size, stickyTransform);
++    FlattenableUtils::write(buffer, size, einkUpdateMode);
+     FlattenableUtils::write(buffer, size, getFrameTimestamps);
+ 
+     status_t result = fence->flatten(buffer, size, fds, count);
+@@ -945,6 +947,7 @@ status_t IGraphicBufferProducer::QueueBufferInput::unflatten(
+     FlattenableUtils::read(buffer, size, scalingMode);
+     FlattenableUtils::read(buffer, size, transform);
+     FlattenableUtils::read(buffer, size, stickyTransform);
++    FlattenableUtils::read(buffer, size, einkUpdateMode);
+     FlattenableUtils::read(buffer, size, getFrameTimestamps);
+ 
+     fence = new Fence();
+diff --git a/libs/gui/ISurfaceComposer.cpp b/libs/gui/ISurfaceComposer.cpp
+index 0a0d112af629159e52146b053be582f7c975925c..f726029109068d357416ea0886481dbae072c540 100644
+--- a/libs/gui/ISurfaceComposer.cpp
++++ b/libs/gui/ISurfaceComposer.cpp
+@@ -305,6 +305,47 @@ public:
+         return reply.readInt32();
+     }
+ 
++    virtual int32_t getEinkSleepSubmitSequence() const
++    {
++        Parcel data, reply;
++        data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
++        status_t err = remote()->transact(
++                BnSurfaceComposer::GET_EINK_SLEEP_SUBMIT_SEQUENCE, data, &reply);
++        return err == NO_ERROR ? reply.readInt32() : 0;
++    }
++
++    virtual int32_t getEinkSleepOverlaySequence() const
++    {
++        Parcel data, reply;
++        data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
++        status_t err = remote()->transact(
++                BnSurfaceComposer::GET_EINK_SLEEP_OVERLAY_SEQUENCE, data, &reply);
++        return err == NO_ERROR ? reply.readInt32() : 0;
++    }
++
++    virtual status_t submitEinkSleepOverlay(int fd, int32_t width, int32_t height,
++            int32_t strideBytes, int32_t alphaLeft, int32_t alphaTop,
++            int32_t alphaRight, int32_t alphaBottom, int32_t dstLeft,
++            int32_t dstTop, int32_t sequence)
++    {
++        Parcel data, reply;
++        data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
++        data.writeFileDescriptor(fd, false);
++        data.writeInt32(width);
++        data.writeInt32(height);
++        data.writeInt32(strideBytes);
++        data.writeInt32(alphaLeft);
++        data.writeInt32(alphaTop);
++        data.writeInt32(alphaRight);
++        data.writeInt32(alphaBottom);
++        data.writeInt32(dstLeft);
++        data.writeInt32(dstTop);
++        data.writeInt32(sequence);
++        status_t err = remote()->transact(
++                BnSurfaceComposer::SUBMIT_EINK_SLEEP_OVERLAY, data, &reply);
++        return err == NO_ERROR ? reply.readInt32() : err;
++    }
++
+     virtual status_t setActiveConfig(const sp<IBinder>& display, int id)
+     {
+         Parcel data, reply;
+@@ -647,6 +688,34 @@ status_t BnSurfaceComposer::onTransact(
+             reply->writeInt32(id);
+             return NO_ERROR;
+         }
++        case GET_EINK_SLEEP_SUBMIT_SEQUENCE: {
++            CHECK_INTERFACE(ISurfaceComposer, data, reply);
++            reply->writeInt32(getEinkSleepSubmitSequence());
++            return NO_ERROR;
++        }
++        case GET_EINK_SLEEP_OVERLAY_SEQUENCE: {
++            CHECK_INTERFACE(ISurfaceComposer, data, reply);
++            reply->writeInt32(getEinkSleepOverlaySequence());
++            return NO_ERROR;
++        }
++        case SUBMIT_EINK_SLEEP_OVERLAY: {
++            CHECK_INTERFACE(ISurfaceComposer, data, reply);
++            const int fd = data.readFileDescriptor();
++            const int32_t width = data.readInt32();
++            const int32_t height = data.readInt32();
++            const int32_t strideBytes = data.readInt32();
++            const int32_t alphaLeft = data.readInt32();
++            const int32_t alphaTop = data.readInt32();
++            const int32_t alphaRight = data.readInt32();
++            const int32_t alphaBottom = data.readInt32();
++            const int32_t dstLeft = data.readInt32();
++            const int32_t dstTop = data.readInt32();
++            const int32_t sequence = data.readInt32();
++            reply->writeInt32(submitEinkSleepOverlay(fd, width, height,
++                    strideBytes, alphaLeft, alphaTop, alphaRight, alphaBottom,
++                    dstLeft, dstTop, sequence));
++            return NO_ERROR;
++        }
+         case SET_ACTIVE_CONFIG: {
+             CHECK_INTERFACE(ISurfaceComposer, data, reply);
+             sp<IBinder> display = data.readStrongBinder();
+diff --git a/libs/gui/Surface.cpp b/libs/gui/Surface.cpp
+index 409a3cb0761015a2a87f610c791c509027992e39..cf208e484b9fd8e01d7d85b71be5f283fa9a3544 100644
+--- a/libs/gui/Surface.cpp
++++ b/libs/gui/Surface.cpp
+@@ -26,6 +26,7 @@
+ 
+ #include <utils/Log.h>
+ #include <utils/Trace.h>
++#include <utils/Timers.h>
+ #include <utils/NativeHandle.h>
+ 
+ #include <ui/DisplayStatInfo.h>
+@@ -91,6 +92,8 @@ Surface::Surface(
+     mTransformHint = 0;
+     mConsumerRunningBehind = false;
+     mConnectedToCpu = false;
++    mCpuFrameDamageValid = false;
++    mEinkUpdateMode = -1;
+     mProducerControlledByApp = controlledByApp;
+     mSwapIntervalZero = false;
+ }
+@@ -664,8 +667,51 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
+     IGraphicBufferProducer::QueueBufferInput input(timestamp, isAutoTimestamp,
+             mDataSpace, crop, mScalingMode, mTransform ^ mStickyTransform,
+             fence, mStickyTransform, mEnableFrameTimestamps);
++    input.setEinkUpdateMode(mEinkUpdateMode);
++    static constexpr int32_t kSleepMarker = 0x04000000;
++    static constexpr int32_t kSleepSequenceMask = 0x03fff000;
++    static constexpr int32_t kSleepSequenceShift = 12;
++    if (mEinkUpdateMode != -1 && (mEinkUpdateMode & kSleepMarker) != 0) {
++        const int32_t sequence = (mEinkUpdateMode & kSleepSequenceMask)
++                >> kSleepSequenceShift;
++        if (sequence != 0) {
++            ATRACE_INT("RIDI_SLEEP_surface_queue", sequence);
++            ALOGI("RIDI_SLEEP Surface buffer queue seq=%d t=%" PRId64,
++                    sequence, systemTime(SYSTEM_TIME_MONOTONIC) / 1000000);
++        }
++    }
+ 
+-    if (mConnectedToCpu || mDirtyRegion.bounds() == Rect::INVALID_RECT) {
++    /*
++     * E70Q10: forward software-canvas damage.
++     *
++     * Upstream reports unknown (full) damage for every CPU producer because
++     * mDirtyRegion is a copy-back accumulator rather than per-frame damage.
++     * lock() knows the real per-frame region, so consume that instead. This is
++     * the Oreo equivalent of the stock KitKat Surface::addEpdc() metadata: it
++     * carries the invalidation rectangle - already the union of an animating
++     * view's previous and current bounds - down to SurfaceFlinger, HWC and the
++     * EPDC update policy.
++     *
++     * lock() supplies the rectangle in top-left buffer coordinates and copies
++     * back everything it did not repaint, so no OpenGL flip is needed here.
++     * A rotating producer transform would need the complementary rotation, so
++     * fall back to unknown damage in that case rather than risk refreshing the
++     * wrong physical area.
++     */
++    const bool cpuDamageUsable = mCpuFrameDamageValid &&
++            (mTransform ^ mStickyTransform) == 0 &&
++            !mCpuFrameDamage.isEmpty() &&
++            mCpuFrameDamage.bounds() != Rect::INVALID_RECT;
++    if (mCpuFrameDamageValid) {
++        if (cpuDamageUsable) {
++            input.setSurfaceDamage(mCpuFrameDamage);
++        } else {
++            input.setSurfaceDamage(Region::INVALID_REGION);
++        }
++        mCpuFrameDamageValid = false;
++        mCpuFrameDamage.clear();
++    } else if (mConnectedToCpu ||
++            mDirtyRegion.bounds() == Rect::INVALID_RECT) {
+         input.setSurfaceDamage(Region::INVALID_REGION);
+     } else {
+         // Here we do two things:
+@@ -733,6 +779,9 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
+     mLastQueueDuration = systemTime() - now;
+     if (err != OK)  {
+         ALOGE("queueBuffer: error queuing buffer to SurfaceTexture, %d", err);
++    } else {
++        // Consume only after the producer accepted this exact frame.
++        mEinkUpdateMode = -1;
+     }
+ 
+     if (mEnableFrameTimestamps) {
+@@ -1460,6 +1509,12 @@ int Surface::setScalingMode(int mode)
+     return NO_ERROR;
+ }
+ 
++void Surface::setEinkUpdateMode(int32_t updateMode)
++{
++    Mutex::Autolock lock(mMutex);
++    mEinkUpdateMode = updateMode;
++}
++
+ int Surface::setBuffersTransform(uint32_t transform)
+ {
+     ATRACE_CALL();
+@@ -1505,6 +1560,11 @@ void Surface::setSurfaceDamage(android_native_rect_t* rects, size_t numRects) {
+     ALOGV("Surface::setSurfaceDamage");
+     Mutex::Autolock lock(mMutex);
+ 
++    // E70Q10: an explicit producer damage call supersedes any region recorded
++    // by a previous lock().
++    mCpuFrameDamageValid = false;
++    mCpuFrameDamage.clear();
++
+     if (mConnectedToCpu || numRects == 0) {
+         mDirtyRegion = Region::INVALID_REGION;
+         return;
+@@ -1676,6 +1736,15 @@ status_t Surface::lock(
+             outBuffer->stride = backBuffer->stride;
+             outBuffer->format = backBuffer->format;
+             outBuffer->bits   = vaddr;
++            /*
++             * E70Q10: newDirtyRegion is the only region the producer repaints
++             * in this buffer; copyBlt() above restored everything else from the
++             * previously posted buffer. It is therefore the exact difference
++             * against the front buffer and the correct surface damage for the
++             * upcoming queueBuffer().
++             */
++            mCpuFrameDamage = newDirtyRegion;
++            mCpuFrameDamageValid = true;
+         }
+     }
+     return err;
+diff --git a/libs/gui/SurfaceComposerClient.cpp b/libs/gui/SurfaceComposerClient.cpp
+index 7ae2672249f19de115bf8574f4c0da8985de55f9..5fd673213293b9845a2b51bd8590fff359e9c171 100644
+--- a/libs/gui/SurfaceComposerClient.cpp
++++ b/libs/gui/SurfaceComposerClient.cpp
+@@ -901,6 +901,23 @@ int SurfaceComposerClient::getActiveConfig(const sp<IBinder>& display) {
+     return ComposerService::getComposerService()->getActiveConfig(display);
+ }
+ 
++int32_t SurfaceComposerClient::getEinkSleepSubmitSequence() {
++    return ComposerService::getComposerService()->getEinkSleepSubmitSequence();
++}
++
++int32_t SurfaceComposerClient::getEinkSleepOverlaySequence() {
++    return ComposerService::getComposerService()->getEinkSleepOverlaySequence();
++}
++
++status_t SurfaceComposerClient::submitEinkSleepOverlay(int fd, int32_t width,
++        int32_t height, int32_t strideBytes, int32_t alphaLeft, int32_t alphaTop,
++        int32_t alphaRight, int32_t alphaBottom, int32_t dstLeft, int32_t dstTop,
++        int32_t sequence) {
++    return ComposerService::getComposerService()->submitEinkSleepOverlay(fd,
++            width, height, strideBytes, alphaLeft, alphaTop, alphaRight,
++            alphaBottom, dstLeft, dstTop, sequence);
++}
++
+ status_t SurfaceComposerClient::setActiveConfig(const sp<IBinder>& display, int id) {
+     return ComposerService::getComposerService()->setActiveConfig(display, id);
+ }
+diff --git a/libs/gui/include/gui/BufferItem.h b/libs/gui/include/gui/BufferItem.h
+index 55637a9be463c2c42539ee9d6818394b7d09d87a..d4a2f35d0c0e3717f030bfd966989fae791b7518 100644
+--- a/libs/gui/include/gui/BufferItem.h
++++ b/libs/gui/include/gui/BufferItem.h
+@@ -110,6 +110,9 @@ class BufferItem : public Flattenable<BufferItem> {
+     // previous frame
+     Region mSurfaceDamage;
+ 
++    // Packed RIDI/Onyx policy for this exact producer frame; -1 means none.
++    int32_t mEinkUpdateMode;
++
+     // Indicates that the consumer should acquire the next frame as soon as it
+     // can and not wait for a frame to become available. This is only relevant
+     // in shared buffer mode.
+diff --git a/libs/gui/include/gui/IGraphicBufferProducer.h b/libs/gui/include/gui/IGraphicBufferProducer.h
+index 6d16e7426c346c57217088593c093bd14f0fd443..96f38db41bcb85fd733145920c5e813490b07496 100644
+--- a/libs/gui/include/gui/IGraphicBufferProducer.h
++++ b/libs/gui/include/gui/IGraphicBufferProducer.h
+@@ -321,14 +321,16 @@ public:
+                 : timestamp(_timestamp), isAutoTimestamp(_isAutoTimestamp),
+                   dataSpace(_dataSpace), crop(_crop), scalingMode(_scalingMode),
+                   transform(_transform), stickyTransform(_sticky), fence(_fence),
+-                  surfaceDamage(), getFrameTimestamps(_getFrameTimestamps) { }
++                  surfaceDamage(), einkUpdateMode(-1),
++                  getFrameTimestamps(_getFrameTimestamps) { }
+ 
+         inline void deflate(int64_t* outTimestamp, bool* outIsAutoTimestamp,
+                 android_dataspace* outDataSpace,
+                 Rect* outCrop, int* outScalingMode,
+                 uint32_t* outTransform, sp<Fence>* outFence,
+                 uint32_t* outStickyTransform = nullptr,
+-                bool* outGetFrameTimestamps = nullptr) const {
++                bool* outGetFrameTimestamps = nullptr,
++                int32_t* outEinkUpdateMode = nullptr) const {
+             *outTimestamp = timestamp;
+             *outIsAutoTimestamp = bool(isAutoTimestamp);
+             *outDataSpace = dataSpace;
+@@ -342,6 +344,9 @@ public:
+             if (outGetFrameTimestamps) {
+                 *outGetFrameTimestamps = getFrameTimestamps;
+             }
++            if (outEinkUpdateMode) {
++                *outEinkUpdateMode = einkUpdateMode;
++            }
+         }
+ 
+         // Flattenable protocol
+@@ -353,6 +358,8 @@ public:
+ 
+         const Region& getSurfaceDamage() const { return surfaceDamage; }
+         void setSurfaceDamage(const Region& damage) { surfaceDamage = damage; }
++        int32_t getEinkUpdateMode() const { return einkUpdateMode; }
++        void setEinkUpdateMode(int32_t updateMode) { einkUpdateMode = updateMode; }
+ 
+     private:
+         int64_t timestamp{0};
+@@ -364,6 +371,7 @@ public:
+         uint32_t stickyTransform{0};
+         sp<Fence> fence;
+         Region surfaceDamage;
++        int32_t einkUpdateMode{-1};
+         bool getFrameTimestamps{false};
+     };
+ 
+diff --git a/libs/gui/include/gui/ISurfaceComposer.h b/libs/gui/include/gui/ISurfaceComposer.h
+index f80ba000b447c8389e24019cb2700b9618373673..baf7c3b2fe4dd25d25b6d8c7868ae79a1a3ba22a 100644
+--- a/libs/gui/include/gui/ISurfaceComposer.h
++++ b/libs/gui/include/gui/ISurfaceComposer.h
+@@ -153,6 +153,18 @@ public:
+      * currently active */
+     virtual int getActiveConfig(const sp<IBinder>& display) = 0;
+ 
++    /* Last reader sleep generation whose MXCFB_SEND_UPDATE succeeded. */
++    virtual int32_t getEinkSleepSubmitSequence() const = 0;
++
++    /* Last transparent sleep generation requested, including an in-flight one. */
++    virtual int32_t getEinkSleepOverlaySequence() const = 0;
++
++    /* Sleep-only, pre-scaled straight-ARGB overlay over the EPDC panel shadow. */
++    virtual status_t submitEinkSleepOverlay(int fd, int32_t width, int32_t height,
++            int32_t strideBytes, int32_t alphaLeft, int32_t alphaTop,
++            int32_t alphaRight, int32_t alphaBottom, int32_t dstLeft,
++            int32_t dstTop, int32_t sequence) = 0;
++
+     /* specifies which configuration (of those returned by getDisplayInfo)
+      * should be used */
+     virtual status_t setActiveConfig(const sp<IBinder>& display, int id) = 0;
+@@ -229,7 +241,10 @@ public:
+         SET_ACTIVE_COLOR_MODE,
+         ENABLE_VSYNC_INJECTIONS,
+         INJECT_VSYNC,
+-        CREATE_SCOPED_CONNECTION
++        CREATE_SCOPED_CONNECTION,
++        GET_EINK_SLEEP_SUBMIT_SEQUENCE,
++        GET_EINK_SLEEP_OVERLAY_SEQUENCE,
++        SUBMIT_EINK_SLEEP_OVERLAY
+     };
+ 
+     virtual status_t onTransact(uint32_t code, const Parcel& data,
+diff --git a/libs/gui/include/gui/Surface.h b/libs/gui/include/gui/Surface.h
+index 0f7e12a2282e1452b804f814fea74679119b37ba..f1336c92fbf496d1607872253c6d09d6af97b5a1 100644
+--- a/libs/gui/include/gui/Surface.h
++++ b/libs/gui/include/gui/Surface.h
+@@ -120,6 +120,9 @@ public:
+      * in <system/window.h>. */
+     int setScalingMode(int mode);
+ 
++    // Attach a packed RIDI/Onyx E Ink policy to the next queued buffer only.
++    void setEinkUpdateMode(int32_t updateMode);
++
+     // See IGraphicBufferProducer::setDequeueTimeout
+     status_t setDequeueTimeout(nsecs_t timeout);
+ 
+@@ -403,6 +406,21 @@ protected:
+     // (the change since the previous frame) passed in by the producer.
+     Region mDirtyRegion;
+ 
++    // E70Q10: the region a CPU producer actually repainted in the buffer that
++    // is about to be queued, in top-left buffer coordinates.
++    //
++    // mDirtyRegion above is a multi-buffer copy-back accumulator, not per-frame
++    // damage, so it cannot be forwarded as surface damage. The reader UI is
++    // rendered entirely by Skia/PixelFlinger through lock()/unlockAndPost(),
++    // and the E Ink update policy needs the exact rectangle ViewRootImpl
++    // invalidated (which already unions an animating view's old and new
++    // bounds). Record it at lock() time and consume it once in queueBuffer().
++    Region mCpuFrameDamage;
++    bool mCpuFrameDamageValid;
++
++    // Packed policy consumed after the matching queueBuffer succeeds. -1 is unset.
++    int32_t mEinkUpdateMode;
++
+     // Stores the current generation number. See setGenerationNumber and
+     // IGraphicBufferProducer::setGenerationNumber for more information.
+     uint32_t mGenerationNumber;
+diff --git a/libs/gui/include/gui/SurfaceComposerClient.h b/libs/gui/include/gui/SurfaceComposerClient.h
+index 145c0597bde6937fe880a89e3648065635d900e7..f176c22d55b69063fb9be994f40a063661117895 100644
+--- a/libs/gui/include/gui/SurfaceComposerClient.h
++++ b/libs/gui/include/gui/SurfaceComposerClient.h
+@@ -79,6 +79,14 @@ public:
+     // returned by getDisplayInfo)
+     static int getActiveConfig(const sp<IBinder>& display);
+ 
++    // Last reader sleep generation physically accepted by the EPDC ioctl.
++    static int32_t getEinkSleepSubmitSequence();
++    static int32_t getEinkSleepOverlaySequence();
++    static status_t submitEinkSleepOverlay(int fd, int32_t width, int32_t height,
++            int32_t strideBytes, int32_t alphaLeft, int32_t alphaTop,
++            int32_t alphaRight, int32_t alphaBottom, int32_t dstLeft,
++            int32_t dstTop, int32_t sequence);
++
+     // Set a new active configuration using an index relative to the list
+     // returned by getDisplayInfo
+     static status_t setActiveConfig(const sp<IBinder>& display, int id);
+diff --git a/opengl/libagl/egl.cpp b/opengl/libagl/egl.cpp
+index a91fb1f19950ea8f9e18e307b8d61cc3da6da2b5..737f6c1e63a641d260d0bd08b0f21e945c0df233 100644
+--- a/opengl/libagl/egl.cpp
++++ b/opengl/libagl/egl.cpp
+@@ -16,6 +16,7 @@
+ */
+ 
+ #include <assert.h>
++#include <stdint.h>
+ #include <atomic>
+ #include <errno.h>
+ #include <fcntl.h>
+@@ -34,6 +35,8 @@
+ #include <ui/Fence.h>
+ #include <ui/GraphicBufferMapper.h>
+ #include <ui/Rect.h>
++#include <system/window.h>
++#include <hardware/gralloc.h>
+ 
+ #include <EGL/egl.h>
+ #include <EGL/eglext.h>
+@@ -56,6 +59,9 @@
+ 
+ EGLBoolean EGLAPI eglSetSwapRectangleANDROID(EGLDisplay dpy, EGLSurface draw,
+         EGLint left, EGLint top, EGLint width, EGLint height);
++EGLBoolean EGLAPI eglSetSwapRectangleWithBufferAgeRIDI(EGLDisplay dpy,
++        EGLSurface draw, EGLint left, EGLint top, EGLint width, EGLint height);
++EGLBoolean EGLAPI eglResetBufferAgeHistoryRIDI(EGLDisplay dpy, EGLSurface draw);
+ 
+ 
+ typedef struct egl_native_pixmap_t
+@@ -188,6 +194,9 @@ struct egl_surface_t
+     virtual     EGLint      getSwapBehavior() const;
+     virtual     EGLBoolean  swapBuffers();
+     virtual     EGLBoolean  setSwapRectangle(EGLint l, EGLint t, EGLint w, EGLint h);
++    virtual     EGLBoolean  setSwapRectangleWithBufferAge(
++            EGLint l, EGLint t, EGLint w, EGLint h);
++    virtual     void        resetRidiBufferAgeHistory();
+ protected:
+     GGLSurface              depth;
+ };
+@@ -231,6 +240,14 @@ EGLBoolean egl_surface_t::setSwapRectangle(
+ {
+     return EGL_FALSE;
+ }
++EGLBoolean egl_surface_t::setSwapRectangleWithBufferAge(
++        EGLint /*l*/, EGLint /*t*/, EGLint /*w*/, EGLint /*h*/)
++{
++    return EGL_FALSE;
++}
++void egl_surface_t::resetRidiBufferAgeHistory()
++{
++}
+ 
+ // ----------------------------------------------------------------------------
+ 
+@@ -256,6 +273,9 @@ struct egl_window_surface_v2_t : public egl_surface_t
+     virtual     EGLint      getRefreshRate() const;
+     virtual     EGLint      getSwapBehavior() const;
+     virtual     EGLBoolean  setSwapRectangle(EGLint l, EGLint t, EGLint w, EGLint h);
++    virtual     EGLBoolean  setSwapRectangleWithBufferAge(
++            EGLint l, EGLint t, EGLint w, EGLint h);
++    virtual     void        resetRidiBufferAgeHistory();
+     
+ private:
+     status_t lock(ANativeWindowBuffer* buf, int usage, void** vaddr);
+@@ -263,6 +283,10 @@ private:
+     ANativeWindow*   nativeWindow;
+     ANativeWindowBuffer*   buffer;
+     ANativeWindowBuffer*   previousBuffer;
++    int bufferAge;
++    enum { DAMAGE_HISTORY_CAPACITY = 3 };
++    bool haveCompletedFrame;
++    int historyWidth, historyHeight, historyStride, historyFormat;
+     int width;
+     int height;
+     void* bits;
+@@ -297,6 +321,12 @@ private:
+ 
+     struct Region {
+         inline Region() : count(0) { }
++        inline explicit Region(const Rect& rect) : count(0) {
++            if (!rect.isEmpty()) {
++                storage[0] = rect;
++                count = 1;
++            }
++        }
+         typedef Rect const* const_iterator;
+         const_iterator begin() const { return storage; }
+         const_iterator end() const { return storage+count; }
+@@ -355,6 +385,16 @@ private:
+ 
+     Rect dirtyRegion;
+     Rect oldDirtyRegion;
++    Rect damageHistory[DAMAGE_HISTORY_CAPACITY]; // newest successful frame first
++    size_t damageHistoryCount;
++    bool ageBasedPartial;
++    bool pendingDamageValid;
++    Rect pendingDamage;
++
++    int queryBufferAge();
++    void resetBufferAgeHistory(bool forgetGeometry);
++    void updateBufferGeometry(const ANativeWindowBuffer* buffer);
++    void recordCompletedDamage(const Rect& damage);
+ };
+ 
+ egl_window_surface_v2_t::egl_window_surface_v2_t(EGLDisplay dpy,
+@@ -362,9 +402,12 @@ egl_window_surface_v2_t::egl_window_surface_v2_t(EGLDisplay dpy,
+         int32_t depthFormat,
+         ANativeWindow* window)
+     : egl_surface_t(dpy, config, depthFormat),
+-    nativeWindow(window), buffer(0), previousBuffer(0), bits(NULL)
++    nativeWindow(window), buffer(0), previousBuffer(0), bufferAge(0),
++    haveCompletedFrame(false), historyWidth(0), historyHeight(0),
++    historyStride(0), historyFormat(0), bits(NULL),
++    dirtyRegion(0, 0), oldDirtyRegion(0, 0), damageHistoryCount(0),
++    ageBasedPartial(false), pendingDamageValid(false), pendingDamage(0, 0)
+ {
+-
+     pixelFormatTable = gglGetPixelFormatTable();
+ 
+     // keep a reference on the window
+@@ -385,6 +428,7 @@ egl_window_surface_v2_t::~egl_window_surface_v2_t() {
+ 
+ EGLBoolean egl_window_surface_v2_t::connect() 
+ {
++    resetBufferAgeHistory(true);
+     // we're intending to do software rendering
+     native_window_set_usage(nativeWindow, 
+             GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN);
+@@ -395,6 +439,7 @@ EGLBoolean egl_window_surface_v2_t::connect()
+             &fenceFd) != NO_ERROR) {
+         return setError(EGL_BAD_ALLOC, EGL_FALSE);
+     }
++    updateBufferGeometry(buffer);
+ 
+     // wait for the buffer
+     sp<Fence> fence(new Fence(fenceFd));
+@@ -438,6 +483,8 @@ EGLBoolean egl_window_surface_v2_t::connect()
+ 
+ void egl_window_surface_v2_t::disconnect() 
+ {
++    resetBufferAgeHistory(true);
++    bufferAge = 0;
+     if (buffer && bits) {
+         bits = NULL;
+         unlock(buffer);
+@@ -468,6 +515,66 @@ status_t egl_window_surface_v2_t::unlock(ANativeWindowBuffer* buf)
+     return mapper.unlock(buf->handle);
+ }
+ 
++int egl_window_surface_v2_t::queryBufferAge()
++{
++    int age = 0;
++    if (nativeWindow->query(nativeWindow, NATIVE_WINDOW_BUFFER_AGE, &age) !=
++            NO_ERROR || age < 0) {
++        return 0;
++    }
++    return age;
++}
++
++void egl_window_surface_v2_t::resetRidiBufferAgeHistory()
++{
++    resetBufferAgeHistory(false);
++}
++
++void egl_window_surface_v2_t::resetBufferAgeHistory(bool forgetGeometry)
++{
++    damageHistoryCount = 0;
++    ageBasedPartial = false;
++    pendingDamageValid = false;
++    pendingDamage = Rect(0, 0);
++    haveCompletedFrame = false;
++    if (forgetGeometry) {
++        historyWidth = historyHeight = historyStride = historyFormat = 0;
++    }
++}
++
++void egl_window_surface_v2_t::updateBufferGeometry(
++        const ANativeWindowBuffer* current)
++{
++    if (historyWidth != 0 &&
++            (historyWidth != current->width || historyHeight != current->height ||
++             historyStride != current->stride || historyFormat != current->format)) {
++        resetBufferAgeHistory(false);
++    }
++    historyWidth = current->width;
++    historyHeight = current->height;
++    historyStride = current->stride;
++    historyFormat = current->format;
++}
++
++void egl_window_surface_v2_t::recordCompletedDamage(const Rect& damage)
++{
++    const Rect full(width, height);
++    if (damage.left == full.left && damage.top == full.top &&
++            damage.right == full.right && damage.bottom == full.bottom) {
++        // A known full frame becomes a fresh history baseline.
++        damageHistory[0] = full;
++        damageHistoryCount = 1;
++        haveCompletedFrame = true;
++        return;
++    }
++    if (damageHistoryCount < DAMAGE_HISTORY_CAPACITY)
++        ++damageHistoryCount;
++    for (size_t i = damageHistoryCount - 1; i > 0; --i)
++        damageHistory[i] = damageHistory[i - 1];
++    damageHistory[0] = damage;
++    haveCompletedFrame = true;
++}
++
+ void egl_window_surface_v2_t::copyBlt(
+         ANativeWindowBuffer* dst, void* dst_vaddr,
+         ANativeWindowBuffer* src, void const* src_vaddr,
+@@ -515,17 +622,15 @@ EGLBoolean egl_window_surface_v2_t::swapBuffers()
+      * Handle eglSetSwapRectangleANDROID()
+      * We copyback from the front buffer 
+      */
+-    if (!dirtyRegion.isEmpty()) {
++    if (!ageBasedPartial && !dirtyRegion.isEmpty()) {
+         dirtyRegion.andSelf(Rect(buffer->width, buffer->height));
+         if (previousBuffer) {
+-            // This was const Region copyBack, but that causes an
+-            // internal compile error on simulator builds
++            // Preserve the legacy path for non-E70Q10 callers.
+             /*const*/ Region copyBack(Region::subtract(oldDirtyRegion, dirtyRegion));
+             if (!copyBack.isEmpty()) {
+                 void* prevBits;
+-                if (lock(previousBuffer, 
++                if (lock(previousBuffer,
+                         GRALLOC_USAGE_SW_READ_OFTEN, &prevBits) == NO_ERROR) {
+-                    // copy from previousBuffer to buffer
+                     copyBlt(buffer, bits, previousBuffer, prevBits, copyBack);
+                     unlock(previousBuffer);
+                 }
+@@ -534,19 +639,37 @@ EGLBoolean egl_window_surface_v2_t::swapBuffers()
+         oldDirtyRegion = dirtyRegion;
+     }
+ 
+-    if (previousBuffer) {
+-        previousBuffer->common.decRef(&previousBuffer->common); 
+-        previousBuffer = 0;
+-    }
+-    
+     unlock(buffer);
+-    previousBuffer = buffer;
+-    nativeWindow->queueBuffer(nativeWindow, buffer, -1);
++    ANativeWindowBuffer* completedBuffer = buffer;
++    const status_t queueResult =
++            nativeWindow->queueBuffer(nativeWindow, completedBuffer, -1);
++    if (queueResult != NO_ERROR && ageBasedPartial) {
++        // A failed queue is terminal for this target, but it must not enter
++        // the completed-frame damage history.
++        resetBufferAgeHistory(false);
++        nativeWindow->cancelBuffer(nativeWindow, completedBuffer, -1);
++        completedBuffer->common.decRef(&completedBuffer->common);
++        buffer = 0;
++        bits = NULL;
++        return setError(EGL_BAD_ACCESS, EGL_FALSE);
++    }
++
++    if (previousBuffer)
++        previousBuffer->common.decRef(&previousBuffer->common);
++    previousBuffer = completedBuffer;
+     buffer = 0;
++    bits = NULL;
++    if (queueResult == NO_ERROR && ageBasedPartial && pendingDamageValid)
++        recordCompletedDamage(pendingDamage);
++    else if (queueResult == NO_ERROR && ageBasedPartial)
++        resetBufferAgeHistory(false);
++    ageBasedPartial = false;
++    pendingDamageValid = false;
+ 
+     // dequeue a new buffer
+     int fenceFd = -1;
+     if (nativeWindow->dequeueBuffer(nativeWindow, &buffer, &fenceFd) == NO_ERROR) {
++        updateBufferGeometry(buffer);
+         sp<Fence> fence(new Fence(fenceFd));
+         if (fence->wait(Fence::TIMEOUT_NEVER)) {
+             nativeWindow->cancelBuffer(nativeWindow, buffer, fenceFd);
+@@ -604,6 +727,89 @@ EGLBoolean egl_window_surface_v2_t::setSwapRectangle(
+     return EGL_TRUE;
+ }
+ 
++EGLBoolean egl_window_surface_v2_t::setSwapRectangleWithBufferAge(
++        EGLint l, EGLint t, EGLint w, EGLint h)
++{
++    // This is a separate E70Q10 path. A failed pre-raster attempt is followed
++    // by a full-rectangle call from SurfaceFlinger; legacy copyback stays off.
++    // Query only on this private E70Q10 path so other products retain their
++    // existing dequeue/swap behavior and incur no buffer-age query overhead.
++    bufferAge = queryBufferAge();
++    if (bufferAge == 0) {
++        damageHistoryCount = 0;
++        haveCompletedFrame = false;
++    }
++    ageBasedPartial = true;
++    pendingDamageValid = false;
++    if (buffer == NULL || l < 0 || t < 0 || w <= 0 || h <= 0 ||
++            l > buffer->width || t > buffer->height ||
++            w > buffer->width - l || h > buffer->height - t) {
++        return EGL_FALSE;
++    }
++
++    const Rect full(buffer->width, buffer->height);
++    const Rect dirty(l, t, l + w, t + h);
++    Rect repair(0, 0);
++    const bool fullRedraw = dirty.left == full.left && dirty.top == full.top &&
++            dirty.right == full.right && dirty.bottom == full.bottom;
++
++    // A full redraw is accepted even if age/history cannot be trusted.
++    if (!fullRedraw) {
++        if (buffer->width != 1404 || buffer->height != 1872 ||
++                buffer->stride != 1408 ||
++                buffer->format != HAL_PIXEL_FORMAT_RGB_565) {
++            return EGL_FALSE;
++        }
++        if (bufferAge == 0 || bufferAge > DAMAGE_HISTORY_CAPACITY + 1) {
++            return EGL_FALSE;
++        }
++        if (!haveCompletedFrame ||
++                (bufferAge > 1 &&
++                 static_cast<size_t>(bufferAge - 1) > damageHistoryCount)) {
++            return EGL_FALSE;
++        }
++        if (bufferAge > 1) {
++            bool haveRepair = false;
++            for (int i = 0; i < bufferAge - 1; ++i) {
++                const Rect& r = damageHistory[i];
++                if (r.isEmpty())
++                    continue;
++                if (!haveRepair) {
++                    repair = r;
++                    haveRepair = true;
++                } else {
++                    repair.left = min(repair.left, r.left);
++                    repair.top = min(repair.top, r.top);
++                    repair.right = max(repair.right, r.right);
++                    repair.bottom = max(repair.bottom, r.bottom);
++                }
++            }
++            if (!repair.isEmpty()) {
++                if (previousBuffer == NULL || previousBuffer == buffer ||
++                        previousBuffer->width != buffer->width ||
++                        previousBuffer->height != buffer->height ||
++                        previousBuffer->stride != buffer->stride ||
++                        previousBuffer->format != buffer->format) {
++                    return EGL_FALSE;
++                }
++                void* prevBits = NULL;
++                if (lock(previousBuffer, GRALLOC_USAGE_SW_READ_OFTEN,
++                        &prevBits) != NO_ERROR) {
++                    return EGL_FALSE;
++                }
++                copyBlt(buffer, bits, previousBuffer, prevBits, Region(repair));
++                unlock(previousBuffer);
++            }
++        }
++    }
++
++    dirtyRegion = dirty;
++    ageBasedPartial = true;
++    pendingDamage = dirty;
++    pendingDamageValid = true;
++    return EGL_TRUE;
++}
++
+ EGLBoolean egl_window_surface_v2_t::bindDrawSurface(ogles_context_t* gl)
+ {
+     GGLSurface buffer;
+@@ -908,7 +1114,11 @@ static const extention_map_t gExtentionMap[] = {
+     { "eglGetSyncAttribKHR",
+             (__eglMustCastToProperFunctionPointerType)&eglGetSyncAttribKHR },
+     { "eglSetSwapRectangleANDROID", 
+-            (__eglMustCastToProperFunctionPointerType)&eglSetSwapRectangleANDROID }, 
++            (__eglMustCastToProperFunctionPointerType)&eglSetSwapRectangleANDROID },
++    { "eglSetSwapRectangleWithBufferAgeRIDI",
++            (__eglMustCastToProperFunctionPointerType)&eglSetSwapRectangleWithBufferAgeRIDI },
++    { "eglResetBufferAgeHistoryRIDI",
++            (__eglMustCastToProperFunctionPointerType)&eglResetBufferAgeHistoryRIDI },
+ };
+ 
+ /*
+@@ -2233,8 +2443,36 @@ EGLBoolean eglSetSwapRectangleANDROID(EGLDisplay dpy, EGLSurface draw,
+     if (d->dpy != dpy)
+         return setError(EGL_BAD_DISPLAY, EGL_FALSE);
+ 
+-    // post the surface
+     d->setSwapRectangle(left, top, width, height);
++    return EGL_TRUE;
++}
+ 
++EGLBoolean eglSetSwapRectangleWithBufferAgeRIDI(EGLDisplay dpy, EGLSurface draw,
++        EGLint left, EGLint top, EGLint width, EGLint height)
++{
++    if (egl_display_t::is_valid(dpy) == EGL_FALSE)
++        return setError(EGL_BAD_DISPLAY, EGL_FALSE);
++
++    egl_surface_t* d = static_cast<egl_surface_t*>(draw);
++    if (!d->isValid())
++        return setError(EGL_BAD_SURFACE, EGL_FALSE);
++    if (d->dpy != dpy)
++        return setError(EGL_BAD_DISPLAY, EGL_FALSE);
++
++    // A false result is an expected pre-raster fallback signal, not an EGL
++    // failure: SurfaceFlinger will retry with a full-screen rectangle.
++    return d->setSwapRectangleWithBufferAge(left, top, width, height);
++}
++
++EGLBoolean eglResetBufferAgeHistoryRIDI(EGLDisplay dpy, EGLSurface draw)
++{
++    if (egl_display_t::is_valid(dpy) == EGL_FALSE)
++        return setError(EGL_BAD_DISPLAY, EGL_FALSE);
++    egl_surface_t* d = static_cast<egl_surface_t*>(draw);
++    if (!d->isValid())
++        return setError(EGL_BAD_SURFACE, EGL_FALSE);
++    if (d->dpy != dpy)
++        return setError(EGL_BAD_DISPLAY, EGL_FALSE);
++    d->resetRidiBufferAgeHistory();
+     return EGL_TRUE;
+ }
+diff --git a/opengl/libagl/primitives.cpp b/opengl/libagl/primitives.cpp
+index 57a798deb3c953759f2fea96d27885e182b64c48..d66e1abe76731b3c033e54ad0ec1c03a4a41324a 100644
+--- a/opengl/libagl/primitives.cpp
++++ b/opengl/libagl/primitives.cpp
+@@ -318,8 +318,17 @@ int compute_iterators_t::iteratorsScale(GGLfixed* it,
+         dc02 >>= -scale;
+     }
+     const int s = m_area_scale;
+-    int32_t dcdx = gglMulAddx(dc01, m_dy02, gglMulx(dc02, m_dy10, s), s);
+-    int32_t dcdy = gglMulAddx(dc02, m_dx01, gglMulx(dc01, m_dx20, s), s);
++    const int64_t exact_dcdx_num =
++            (int64_t)dc01 * (int64_t)m_dy02 +
++            (int64_t)dc02 * (int64_t)m_dy10;
++    const int64_t exact_dcdy_num =
++            (int64_t)dc02 * (int64_t)m_dx01 +
++            (int64_t)dc01 * (int64_t)m_dx20;
++    /* Preserve exact-zero cross gradients before asymmetric fixed-point rounding. */
++    int32_t dcdx = exact_dcdx_num == 0 ? 0 :
++            gglMulAddx(dc01, m_dy02, gglMulx(dc02, m_dy10, s), s);
++    int32_t dcdy = exact_dcdy_num == 0 ? 0 :
++            gglMulAddx(dc02, m_dx01, gglMulx(dc01, m_dx20, s), s);
+     int32_t c = c0 - (gglMulAddx(dcdx, m_x0, 
+             gglMulx(dcdy, m_y0, TRI_FRACTION_BITS), TRI_FRACTION_BITS));
+     it[0] = c;
+diff --git a/opengl/libs/EGL/Loader.cpp b/opengl/libs/EGL/Loader.cpp
+index 23a2c23f4b67a6fb7b053ae42369a06cfb9f78ee..1de6af60dd52ec27d2d622c2f91bc5e3e7480b2b 100644
+--- a/opengl/libs/EGL/Loader.cpp
++++ b/opengl/libs/EGL/Loader.cpp
+@@ -345,6 +345,25 @@ static void* load_system_driver(const char* kind) {
+                     break;
+             }
+ 
++            // Software EGL implementations such as Mesa live in /system and
++            // cannot be loaded through the isolated vendor driver namespace.
++            // Honor ro.hardware.egl before scanning the directory; otherwise
++            // USE_SW_OPENGL may select libGLES_android.so first.
++            char driver[PROPERTY_VALUE_MAX];
++            if (property_get("ro.hardware.egl", driver, nullptr) > 0) {
++#if defined(__LP64__)
++                result = std::string("/system/lib64/egl/lib") + kind + "_" +
++                        driver + ".so";
++#else
++                result = std::string("/system/lib/egl/lib") + kind + "_" +
++                        driver + ".so";
++#endif
++                if (!access(result.c_str(), R_OK)) {
++                    return result;
++                }
++                result.clear();
++            }
++
+             std::string pattern = std::string("lib") + kind;
+             const char* const searchPaths[] = {
+ #if defined(__LP64__)
+@@ -434,12 +453,17 @@ static void* load_system_driver(const char* kind) {
+     }
+     const char* const driver_absolute_path = absolutePath.c_str();
+ 
+-    // Try to load drivers from the 'sphal' namespace, if it exist. Fall back to
+-    // the original routine when the namespace does not exist.
+-    // See /system/core/rootdir/etc/ld.config.txt for the configuration of the
+-    // sphal namespace.
+-    void* dso = do_android_load_sphal_library(driver_absolute_path,
+-                                              RTLD_NOW | RTLD_LOCAL);
++    // Vendor GPU drivers belong in the isolated sphal namespace.  The AGL
++    // software renderer is a system library and depends on system-private
++    // libraries such as libpixelflinger, so loading it through sphal fails in
++    // SurfaceFlinger even though the same file loads in zygote.
++    void* dso;
++    if (!strncmp(driver_absolute_path, "/system/", strlen("/system/"))) {
++        dso = dlopen(driver_absolute_path, RTLD_NOW | RTLD_LOCAL);
++    } else {
++        dso = do_android_load_sphal_library(driver_absolute_path,
++                                            RTLD_NOW | RTLD_LOCAL);
++    }
+     if (dso == 0) {
+         const char* err = dlerror();
+         ALOGE("load_driver(%s): %s", driver_absolute_path, err ? err : "unknown");
+diff --git a/services/surfaceflinger/DisplayDevice.cpp b/services/surfaceflinger/DisplayDevice.cpp
+index fc600023342d2e68396541a519cbb430c559601b..dc535f1f975065e10a5456cbd93b21fdc92ccb6b 100644
+--- a/services/surfaceflinger/DisplayDevice.cpp
++++ b/services/surfaceflinger/DisplayDevice.cpp
+@@ -19,6 +19,7 @@
+ #define LOG_TAG "DisplayDevice"
+ 
+ #include <stdlib.h>
++#include <stdint.h>
+ #include <stdio.h>
+ #include <string.h>
+ #include <math.h>
+@@ -54,6 +55,43 @@
+ using namespace android;
+ // ----------------------------------------------------------------------------
+ 
++typedef EGLBoolean (*EglSetSwapRectangleWithBufferAgeRIDI)(EGLDisplay, EGLSurface,
++        EGLint, EGLint, EGLint, EGLint);
++typedef EGLBoolean (*EglResetBufferAgeHistoryRIDI)(EGLDisplay, EGLSurface);
++
++static EglSetSwapRectangleWithBufferAgeRIDI getEglSetSwapRectangleWithBufferAgeRIDI()
++{
++    static EglSetSwapRectangleWithBufferAgeRIDI proc =
++            reinterpret_cast<EglSetSwapRectangleWithBufferAgeRIDI>(
++                    eglGetProcAddress("eglSetSwapRectangleWithBufferAgeRIDI"));
++    return proc;
++}
++
++static EglResetBufferAgeHistoryRIDI getEglResetBufferAgeHistoryRIDI()
++{
++    static EglResetBufferAgeHistoryRIDI proc =
++            reinterpret_cast<EglResetBufferAgeHistoryRIDI>(
++                    eglGetProcAddress("eglResetBufferAgeHistoryRIDI"));
++    return proc;
++}
++
++static bool isRidiBufferAgePartialSurface(DisplayDevice::DisplayType type,
++        int width, int height, int format)
++{
++    char einkMode[PROPERTY_VALUE_MAX];
++    char productDevice[PROPERTY_VALUE_MAX];
++    char bufferAgePartial[PROPERTY_VALUE_MAX];
++    property_get("ro.ridi.eink_mode", einkMode, "false");
++    property_get("ro.product.device", productDevice, "");
++    property_get("persist.ridi.buffer_age_partial", bufferAgePartial, "0");
++    return type == DisplayDevice::DISPLAY_PRIMARY &&
++            strcmp(productDevice, "e70q10") == 0 &&
++            strcmp(einkMode, "true") == 0 && width == 1404 && height == 1872 &&
++            format == HAL_PIXEL_FORMAT_RGB_565 &&
++            strcmp(bufferAgePartial, "1") == 0 &&
++            getEglSetSwapRectangleWithBufferAgeRIDI() != NULL;
++}
++
+ #ifdef EGL_ANDROID_swap_rectangle
+ static constexpr bool kEGLAndroidSwapRectangle = true;
+ #else
+@@ -108,6 +146,8 @@ DisplayDevice::DisplayDevice(
+       mFormat(),
+ #endif
+       mFlags(),
++      mRidiBufferAgePartialRequested(false),
++      mRidiBufferAgePartial(false),
+       mPageFlipCount(),
+       mIsSecure(isSecure),
+       mLayerStack(NO_LAYER_STACK),
+@@ -158,6 +198,8 @@ DisplayDevice::DisplayDevice(
+     mSurface = eglSurface;
+ #ifndef USE_HWC2
+     mFormat = format;
++    mRidiBufferAgePartialRequested = isRidiBufferAgePartialSurface(mType,
++            mDisplayWidth, mDisplayHeight, mFormat);
+ #endif
+     mPageFlipCount = 0;
+     mViewport.makeInvalid();
+@@ -250,7 +292,7 @@ void DisplayDevice::flip(const Region& dirty) const
+ {
+     mFlinger->getRenderEngine().checkErrors();
+ 
+-    if (kEGLAndroidSwapRectangle) {
++    if (!mRidiBufferAgePartial && kEGLAndroidSwapRectangle) {
+         if (mFlags & SWAP_RECTANGLE) {
+             const Region newDirty(dirty.intersect(bounds()));
+             const Rect b(newDirty.getBounds());
+@@ -262,6 +304,22 @@ void DisplayDevice::flip(const Region& dirty) const
+     mPageFlipCount++;
+ }
+ 
++bool DisplayDevice::preparePartialComposition(const Region& dirty) const
++{
++    if (!mRidiBufferAgePartial)
++        return false;
++
++    EglSetSwapRectangleWithBufferAgeRIDI setRectangle =
++            getEglSetSwapRectangleWithBufferAgeRIDI();
++    if (setRectangle == NULL)
++        return false;
++
++    const Region clipped(dirty.intersect(bounds()));
++    const Rect rect(clipped.getBounds());
++    return setRectangle(mDisplay, mSurface, rect.left, rect.top,
++            rect.width(), rect.height()) == EGL_TRUE;
++}
++
+ status_t DisplayDevice::beginFrame(bool mustRecompose) const {
+     return mDisplaySurface->beginFrame(mustRecompose);
+ }
+@@ -515,6 +573,11 @@ void DisplayDevice::setDisplaySize(const int newWidth, const int newHeight) {
+     mSurface = eglCreateWindowSurface(mDisplay, mConfig, window, NULL);
+     eglQuerySurface(mDisplay, mSurface, EGL_WIDTH,  &mDisplayWidth);
+     eglQuerySurface(mDisplay, mSurface, EGL_HEIGHT, &mDisplayHeight);
++#ifndef USE_HWC2
++    mRidiBufferAgePartialRequested = isRidiBufferAgePartialSurface(mType,
++            mDisplayWidth, mDisplayHeight, mFormat);
++    mRidiBufferAgePartial = false;
++#endif
+ 
+     LOG_FATAL_IF(mDisplayWidth != newWidth,
+                 "Unable to set new width to %d", newWidth);
+@@ -524,6 +587,14 @@ void DisplayDevice::setDisplaySize(const int newWidth, const int newHeight) {
+ 
+ void DisplayDevice::setProjection(int orientation,
+         const Rect& newViewport, const Rect& newFrame) {
++    const bool projectionChanged = orientation != mOrientation ||
++            newViewport != mViewport || newFrame != mFrame;
++    if (projectionChanged && mRidiBufferAgePartial) {
++        EglResetBufferAgeHistoryRIDI resetHistory =
++                getEglResetBufferAgeHistoryRIDI();
++        if (resetHistory != NULL)
++            resetHistory(mDisplay, mSurface);
++    }
+     Rect viewport(newViewport);
+     Rect frame(newFrame);
+ 
+@@ -607,6 +678,24 @@ void DisplayDevice::setProjection(int orientation,
+     }
+     mViewport = viewport;
+     mFrame = frame;
++#ifndef USE_HWC2
++    const bool ridiProjectionSupported =
++            orientation == DisplayState::eOrientationDefault &&
++            viewport.left == 0 && viewport.top == 0 &&
++            viewport.right == w && viewport.bottom == h &&
++            frame.left == 0 && frame.top == 0 &&
++            frame.right == w && frame.bottom == h;
++    const bool wasRidiBufferAgePartial = mRidiBufferAgePartial;
++    mRidiBufferAgePartial = mRidiBufferAgePartialRequested &&
++            ridiProjectionSupported;
++    if (projectionChanged && mRidiBufferAgePartial &&
++            !wasRidiBufferAgePartial) {
++        EglResetBufferAgeHistoryRIDI resetHistory =
++                getEglResetBufferAgeHistoryRIDI();
++        if (resetHistory != NULL)
++            resetHistory(mDisplay, mSurface);
++    }
++#endif
+ }
+ 
+ uint32_t DisplayDevice::getPrimaryDisplayOrientationTransform() {
+diff --git a/services/surfaceflinger/DisplayDevice.h b/services/surfaceflinger/DisplayDevice.h
+index 8636e2af790171d5b35cdee0cb926782ac0c343e..a691e089fd7d0b6b4149eb21e179fbf61ebc69c0 100644
+--- a/services/surfaceflinger/DisplayDevice.h
++++ b/services/surfaceflinger/DisplayDevice.h
+@@ -142,6 +142,8 @@ public:
+     uint32_t                getLayerStack() const { return mLayerStack; }
+     int32_t                 getDisplayType() const { return mType; }
+     bool                    isPrimary() const { return mType == DISPLAY_PRIMARY; }
++    bool                    usesRidiBufferAgePartial() const { return mRidiBufferAgePartial; }
++    bool                    preparePartialComposition(const Region& dirty) const;
+     int32_t                 getHwcDisplayId() const { return mHwcDisplayId; }
+     const wp<IBinder>&      getDisplayToken() const { return mDisplayToken; }
+ 
+@@ -230,6 +232,8 @@ private:
+     PixelFormat     mFormat;
+ #endif
+     uint32_t        mFlags;
++    bool            mRidiBufferAgePartialRequested;
++    bool            mRidiBufferAgePartial;
+     mutable uint32_t mPageFlipCount;
+     String8         mDisplayName;
+     bool            mIsSecure;
+diff --git a/services/surfaceflinger/DisplayHardware/FramebufferSurface.cpp b/services/surfaceflinger/DisplayHardware/FramebufferSurface.cpp
+index 68d7a18d3a232d096532a3fbe4d15669cf8e0f71..dd0e0657f30872a7b578ab196cc74106730f6c3f 100644
+--- a/services/surfaceflinger/DisplayHardware/FramebufferSurface.cpp
++++ b/services/surfaceflinger/DisplayHardware/FramebufferSurface.cpp
+@@ -84,8 +84,27 @@ FramebufferSurface::FramebufferSurface(HWComposer& hwc, int disp,
+     mConsumer->setDefaultBufferFormat(mHwc.getFormat(disp));
+     mConsumer->setDefaultBufferSize(mHwc.getWidth(disp), mHwc.getHeight(disp));
+ #endif
+-    mConsumer->setMaxAcquiredBufferCount(
+-            SurfaceFlinger::maxFrameBufferAcquiredBuffers - 1);
++    /*
++     * BoardConfig sets NUM_FRAMEBUFFER_SURFACE_BUFFERS=3.  Use the runtime
++     * configstore value rather than a second hard-coded policy; the producer
++     * diagnostics report the resulting min-undequeued/dequeued relationship.
++     */
++    const int framebufferCount = static_cast<int>(
++            SurfaceFlinger::maxFrameBufferAcquiredBuffers);
++    ALOGI("E70Q10_FBQUEUE configured_count=%d expected_physical_pages=3",
++          framebufferCount);
++    LOG_ALWAYS_FATAL_IF(framebufferCount != 3,
++            "E70Q10 requires exactly three FramebufferSurface buffers");
++    status_t err = mConsumer->setMaxBufferCount(framebufferCount);
++    LOG_ALWAYS_FATAL_IF(err != NO_ERROR,
++            "failed to cap FramebufferSurface to %d physical buffers: %d",
++            framebufferCount, err);
++    err = mConsumer->setMaxAcquiredBufferCount(framebufferCount - 1);
++    LOG_ALWAYS_FATAL_IF(err != NO_ERROR,
++            "failed to set FramebufferSurface acquired count to %d: %d",
++            framebufferCount - 1, err);
++    ALOGI("FramebufferSurface physical buffer cap=%d acquired=%d",
++          framebufferCount, framebufferCount - 1);
+ }
+ 
+ status_t FramebufferSurface::beginFrame(bool /*mustRecompose*/) {
+@@ -176,13 +195,17 @@ status_t FramebufferSurface::nextBuffer(sp<GraphicBuffer>& outBuffer, sp<Fence>&
+ #else
+     outBuffer = mCurrentBuffer;
+ #endif
++#ifdef USE_HWC2
+     status_t result =
+             mHwc.setClientTarget(mDisplayType, outSlot, outFence, outBuffer, outDataspace);
+     if (result != NO_ERROR) {
+         ALOGE("error posting framebuffer: %d", result);
+     }
+-
+     return result;
++#else
++    // HWC1 posts this buffer from onFrameAvailable() through fbPost().
++    return NO_ERROR;
++#endif
+ }
+ 
+ #ifndef USE_HWC2
+diff --git a/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.cpp b/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.cpp
+index dcb29135b9a7afbea7fbcb458c7147334d3e4d06..b61106d50af7904b39492fec895e6695f2d0c083 100644
+--- a/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.cpp
++++ b/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.cpp
+@@ -36,6 +36,7 @@
+ 
+ #include <hardware/hardware.h>
+ #include <hardware/hwcomposer.h>
++#include <hardware/ridi_eink.h>
+ 
+ #include <android/configuration.h>
+ 
+@@ -423,8 +424,18 @@ status_t HWComposer::queryDisplayProperties(int disp) {
+         mDisplayData[disp].configs.push_back(config);
+     }
+ 
+-    // FIXME: what should we set the format to?
+-    mDisplayData[disp].format = HAL_PIXEL_FORMAT_RGBA_8888;
++    /*
++     * HWC 1.1 and newer have no standard display-format attribute, so AOSP
++     * assumes RGBA8888 here.  The E70Q10 stock presentation path is a direct
++     * RGB565 EPDC framebuffer: its 3776-byte row is 1888 RGB565 pixels, not
++     * 944 RGBA pixels.  Advertising RGBA made FramebufferSurface allocate an
++     * impossible 1872-wide buffer with stride 944 and visibly folded every
++     * row in half.  Match the format reported by the framebuffer HAL.
++     */
++    mDisplayData[disp].format =
++            (disp == HWC_DISPLAY_PRIMARY
++                    && property_get_bool("ro.ridi.eink_mode", false))
++            ? HAL_PIXEL_FORMAT_RGB_565 : HAL_PIXEL_FORMAT_RGBA_8888;
+     mDisplayData[disp].connected = true;
+     return NO_ERROR;
+ }
+@@ -593,7 +604,10 @@ status_t HWComposer::createWorkList(int32_t id, size_t numLayers) {
+             size_t size = sizeof(hwc_display_contents_1_t)
+                     + numLayers * sizeof(hwc_layer_1_t);
+             free(disp.list);
+-            disp.list = (hwc_display_contents_1_t*)malloc(size);
++            // E70Q10: zero the layer array. hwc_layer_1_t gained fields such as
++            // surfaceDamage that SurfaceFlinger does not always write, and the
++            // E Ink HAL reads them.
++            disp.list = (hwc_display_contents_1_t*)calloc(1, size);
+             disp.capacity = numLayers;
+         }
+         if (hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_1)) {
+@@ -660,6 +674,55 @@ status_t HWComposer::setFramebufferTarget(int32_t id,
+     return NO_ERROR;
+ }
+ 
++status_t HWComposer::setFramebufferTargetDamage(int32_t id,
++        const Region& damage) {
++    if (uint32_t(id) > 31 || !mAllocatedDisplayIDs.hasBit(id)) {
++        return BAD_INDEX;
++    }
++    if (!mHwc || !hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_5)) {
++        return NO_ERROR;
++    }
++
++    Mutex::Autolock _l(mDisplayLock);
++    DisplayData& disp(mDisplayData[id]);
++    if (!disp.framebufferTarget) {
++        return NO_ERROR;
++    }
++
++    hwc_region_t& surfaceDamage = disp.framebufferTarget->surfaceDamage;
++
++    // INVALID_RECT is the upstream encoding of unknown damage. HWC 1.5 spells
++    // that as zero rects, meaning the whole layer must be refreshed.
++    if (damage.getBounds() == Rect::INVALID_RECT) {
++        disp.fbTargetDamageRegion.clear();
++        surfaceDamage.numRects = 0;
++        surfaceDamage.rects = NULL;
++        return NO_ERROR;
++    }
++
++    // An empty region genuinely means nothing changed on screen. HWC 1.5
++    // distinguishes that from unknown damage with a single empty rect, which
++    // matters here: reporting unknown damage on an idle frame would trigger a
++    // needless full-screen GC16 refresh.
++    if (damage.isEmpty()) {
++        disp.fbTargetDamageRegion.clear();
++        disp.fbTargetNoDamageRect.left = 0;
++        disp.fbTargetNoDamageRect.top = 0;
++        disp.fbTargetNoDamageRect.right = 0;
++        disp.fbTargetNoDamageRect.bottom = 0;
++        surfaceDamage.numRects = 1;
++        surfaceDamage.rects = &disp.fbTargetNoDamageRect;
++        return NO_ERROR;
++    }
++
++    // Keep a copy alive: the hwc_layer_1_t only stores a pointer into it and
++    // the HAL reads it during set().
++    disp.fbTargetDamageRegion = damage;
++    surfaceDamage.rects = reinterpret_cast<hwc_rect_t const*>(
++            disp.fbTargetDamageRegion.getArray(&surfaceDamage.numRects));
++    return NO_ERROR;
++}
++
+ status_t HWComposer::prepare() {
+     Mutex::Autolock _l(mDisplayLock);
+     for (size_t i=0 ; i<mNumDisplays ; i++) {
+@@ -804,6 +867,44 @@ status_t HWComposer::commit() {
+     return (status_t)err;
+ }
+ 
++int32_t HWComposer::getEinkSleepSubmitSequence() const {
++    if (mHwc == nullptr || mHwc->reserved_proc[0] == nullptr) {
++        return 0;
++    }
++    typedef int32_t (*ridi_extension_fn)(hwc_composer_device_1_t*, int32_t, void*);
++    ridi_extension_fn extension =
++            reinterpret_cast<ridi_extension_fn>(mHwc->reserved_proc[0]);
++    return extension(mHwc, RIDI_EINK_EXTENSION_GET_SLEEP_SUBMIT_SEQUENCE,
++            nullptr);
++}
++
++status_t HWComposer::submitEinkSleepOverlay(int fd, int32_t width,
++        int32_t height, int32_t strideBytes, int32_t alphaLeft, int32_t alphaTop,
++        int32_t alphaRight, int32_t alphaBottom, int32_t dstLeft, int32_t dstTop,
++        int32_t sequence) {
++    if (mHwc == nullptr || mHwc->reserved_proc[0] == nullptr) {
++        return INVALID_OPERATION;
++    }
++    ridi_eink_sleep_overlay overlay = {};
++    overlay.version = RIDI_EINK_SLEEP_OVERLAY_VERSION;
++    overlay.fd = fd;
++    overlay.width = width;
++    overlay.height = height;
++    overlay.stride_bytes = strideBytes;
++    overlay.alpha_left = alphaLeft;
++    overlay.alpha_top = alphaTop;
++    overlay.alpha_right = alphaRight;
++    overlay.alpha_bottom = alphaBottom;
++    overlay.dst_left = dstLeft;
++    overlay.dst_top = dstTop;
++    overlay.sequence = sequence;
++    overlay.flags = RIDI_EINK_SLEEP_OVERLAY_STRAIGHT_ARGB;
++    typedef int32_t (*ridi_extension_fn)(hwc_composer_device_1_t*, int32_t, void*);
++    ridi_extension_fn extension =
++            reinterpret_cast<ridi_extension_fn>(mHwc->reserved_proc[0]);
++    return extension(mHwc, RIDI_EINK_EXTENSION_SUBMIT_SLEEP_OVERLAY, &overlay);
++}
++
+ status_t HWComposer::setPowerMode(int disp, int mode) {
+     LOG_FATAL_IF(disp >= VIRTUAL_DISPLAY_ID_BASE);
+     if (mHwc) {
+@@ -850,6 +951,15 @@ void HWComposer::disconnectDisplay(int disp) {
+ 
+ int HWComposer::getVisualID() const {
+     if (mHwc && hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_1)) {
++        /*
++         * AOSP's HWC1 compatibility path hard-codes RGBA8888 here because
++         * HWC 1.1 has no display-format attribute.  E70Q10 is the opposite
++         * case: HWC presents directly to a 16-bit EPDC framebuffer. Returning
++         * RGBA makes EGL override the RGB565 FramebufferSurface default and
++         * turns the 3776-byte scanline into a nonsensical 944-pixel stride.
++         */
++        if (property_get_bool("ro.ridi.eink_mode", false))
++            return HAL_PIXEL_FORMAT_RGB_565;
+         // FIXME: temporary hack until HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED
+         // is supported by the implementation. we can only be in this case
+         // if we have HWC 1.1
+@@ -1001,6 +1111,22 @@ public:
+         l->blending = HWC_BLENDING_NONE;
+         l->visibleRegionScreen.numRects = 0;
+         l->visibleRegionScreen.rects = NULL;
++        /*
++         * E70Q10: createWorkList() allocates the layer array with malloc(), so
++         * surfaceDamage holds uninitialised memory until setPerFrameData()
++         * runs. A skipped layer would otherwise hand the HAL a garbage rect
++         * pointer. An E Ink HAL dereferences these rects, so clear them here
++         * with the rest of the default state. Zero rects means "unknown
++         * damage", which is the safe conservative value.
++         */
++        if (hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_5)) {
++            l->surfaceDamage.numRects = 0;
++            l->surfaceDamage.rects = NULL;
++        }
++        const int32_t noEinkUpdateMode = -1;
++        static_assert(sizeof(l->reserved) >= sizeof(noEinkUpdateMode),
++                "hwc_layer_1_t reserved area is too small for E Ink policy");
++        memcpy(l->reserved, &noEinkUpdateMode, sizeof(noEinkUpdateMode));
+         l->acquireFenceFd = -1;
+         l->releaseFenceFd = -1;
+         l->planeAlpha = 0xFF;
+@@ -1073,6 +1199,12 @@ public:
+                 mSurfaceDamageRegions->itemAt(mIndex).getArray(
+                 &surfaceDamage.numRects));
+     }
++    virtual void setEinkUpdateMode(int32_t updateMode) {
++        hwc_layer_1_t* const layer = getLayer();
++        static_assert(sizeof(layer->reserved) >= sizeof(updateMode),
++                "hwc_layer_1_t reserved area is too small for E Ink policy");
++        memcpy(layer->reserved, &updateMode, sizeof(updateMode));
++    }
+     virtual void setSidebandStream(const sp<NativeHandle>& stream) {
+         ALOG_ASSERT(stream->handle() != NULL);
+         getLayer()->compositionType = HWC_SIDEBAND;
+@@ -1336,7 +1468,13 @@ HWComposer::DisplayData::DisplayData()
+     lastRetireFence(Fence::NO_FENCE), lastDisplayFence(Fence::NO_FENCE),
+     outbufHandle(NULL), outbufAcquireFence(Fence::NO_FENCE),
+     events(0)
+-{}
++{
++    // E70Q10: framebuffer-target damage bookkeeping.
++    fbTargetNoDamageRect.left = 0;
++    fbTargetNoDamageRect.top = 0;
++    fbTargetNoDamageRect.right = 0;
++    fbTargetNoDamageRect.bottom = 0;
++}
+ 
+ HWComposer::DisplayData::~DisplayData() {
+     free(list);
+diff --git a/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.h b/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.h
+index 4bc63bbac847884b8ead0ec186be247dae57e04b..e88eeb7b0fd2066829bcf30885c14c1121bc6ba5 100644
+--- a/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.h
++++ b/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.h
+@@ -25,6 +25,9 @@
+ #include <system/graphics.h>
+ 
+ #include <ui/Fence.h>
++// E70Q10: DisplayData stores a Region by value for the framebuffer target's
++// surfaceDamage, so the complete definition is required here.
++#include <ui/Region.h>
+ 
+ #include <utils/BitSet.h>
+ #include <utils/Condition.h>
+@@ -101,6 +104,12 @@ public:
+     // commits the list
+     status_t commit();
+ 
++    int32_t getEinkSleepSubmitSequence() const;
++    status_t submitEinkSleepOverlay(int fd, int32_t width, int32_t height,
++            int32_t strideBytes, int32_t alphaLeft, int32_t alphaTop,
++            int32_t alphaRight, int32_t alphaBottom, int32_t dstLeft,
++            int32_t dstTop, int32_t sequence);
++
+     // set power mode
+     status_t setPowerMode(int disp, int mode);
+ 
+@@ -142,6 +151,17 @@ public:
+     status_t setOutputBuffer(int32_t id, const sp<Fence>& acquireFence,
+             const sp<GraphicBuffer>& buf);
+ 
++    // E70Q10: publish this display's composition dirty region as the
++    // HWC_FRAMEBUFFER_TARGET layer's surfaceDamage.
++    //
++    // Per-layer surfaceDamage cannot describe an area a layer vacated, because
++    // a dismissed popup or a closed window is simply gone from the layer list.
++    // SurfaceFlinger's display dirty region already covers both the newly
++    // painted content and the region exposed by removed or moved layers, in
++    // screen coordinates. On E Ink this is the rectangle that must be driven so
++    // no stale image is left behind. Zero rects keeps the HWC 1.5 meaning of
++    // "unknown damage", i.e. refresh everything.
++    status_t setFramebufferTargetDamage(int32_t id, const Region& damage);
+     // Get the retire fence for the last committed frame. This fence will
+     // signal when the h/w composer is completely finished with the frame.
+     // For physical displays, it is no longer being displayed. For virtual
+@@ -173,6 +193,7 @@ public:
+         virtual void setCrop(const FloatRect& crop) = 0;
+         virtual void setVisibleRegionScreen(const Region& reg) = 0;
+         virtual void setSurfaceDamage(const Region& reg) = 0;
++        virtual void setEinkUpdateMode(int32_t updateMode) = 0;
+         virtual void setSidebandStream(const sp<NativeHandle>& stream) = 0;
+         virtual void setBuffer(const sp<GraphicBuffer>& buffer) = 0;
+         virtual void setAcquireFenceFd(int fenceFd) = 0;
+@@ -366,6 +387,12 @@ private:
+         // modified.
+         Vector<Region> visibleRegions;
+         Vector<Region> surfaceDamageRegions;
++        // E70Q10: backing memory for the HWC_FRAMEBUFFER_TARGET layer's
++        // surfaceDamage. See setFramebufferTargetDamage().
++        Region fbTargetDamageRegion;
++        // Backing memory for the HWC 1.5 "one empty rect means nothing
++        // changed" encoding.
++        hwc_rect_t fbTargetNoDamageRect;
+     };
+ 
+     sp<SurfaceFlinger>              mFlinger;
+diff --git a/services/surfaceflinger/Layer.cpp b/services/surfaceflinger/Layer.cpp
+index 1b864fd2d888fe90d8d916919577e47afae89c34..fece8701f7ffe310a5e8926950d36f4b1b43e495 100755
+--- a/services/surfaceflinger/Layer.cpp
++++ b/services/surfaceflinger/Layer.cpp
+@@ -21,6 +21,8 @@
+ 
+ #include <stdlib.h>
+ #include <stdint.h>
++#include <inttypes.h>
++#include <string.h>
+ #include <sys/types.h>
+ #include <math.h>
+ 
+@@ -33,8 +35,10 @@
+ #include <utils/NativeHandle.h>
+ #include <utils/StopWatch.h>
+ #include <utils/Trace.h>
++#include <utils/Timers.h>
+ 
+ #include <ui/DebugUtils.h>
++#include <ui/Fence.h>
+ #include <ui/GraphicBuffer.h>
+ #include <ui/PixelFormat.h>
+ 
+@@ -86,6 +90,7 @@ Layer::Layer(SurfaceFlinger* flinger, const sp<Client>& client,
+         mBufferLatched(false),
+         mCurrentFrameNumber(0),
+         mPreviousFrameNumber(0),
++        mCurrentEinkUpdateMode(-1),
+         mRefreshPending(false),
+         mFrameLatencyNeeded(false),
+         mFiltering(false),
+@@ -907,6 +912,10 @@ void Layer::setPerFrameData(const sp<const DisplayDevice>& hw,
+     Region visible = tr.transform(visibleRegion.intersect(hw->getViewport()));
+     layer.setVisibleRegionScreen(visible);
+     layer.setSurfaceDamage(surfaceDamageRegion);
++    layer.setEinkUpdateMode(mCurrentEinkUpdateMode);
++    // HWC contents now owns this frame's copy. Do not replay the policy when
++    // another layer causes composition without a new buffer from this layer.
++    mCurrentEinkUpdateMode = -1;
+     mIsGlesComposition = (layer.getCompositionType() == HWC_FRAMEBUFFER);
+ 
+     if (mSidebandStream.get()) {
+@@ -1062,7 +1071,11 @@ void Layer::onDraw(const sp<const DisplayDevice>& hw, const Region& clip,
+         // if not everything below us is covered, we plug the holes!
+         Region holes(clip.subtract(under));
+         if (!holes.isEmpty()) {
+-            clearWithOpenGL(hw, 0, 0, 0, 1);
++            if (property_get_bool("ro.ridi.eink_mode", false)) {
++                clearWithOpenGL(hw, 1, 1, 1, 1);
++            } else {
++                clearWithOpenGL(hw, 0, 0, 0, 1);
++            }
+         }
+         return;
+     }
+@@ -1079,13 +1092,14 @@ void Layer::onDraw(const sp<const DisplayDevice>& hw, const Region& clip,
+     bool blackOutLayer = isProtected() || (isSecure() && !hw->isSecure());
+ 
+     RenderEngine& engine(mFlinger->getRenderEngine());
++    bool useFiltering = false;
++    float textureMatrix[16] = {};
+ 
+     if (!blackOutLayer) {
+         // TODO: we could be more subtle with isFixedSize()
+-        const bool useFiltering = getFiltering() || needsFiltering(hw) || isFixedSize();
++        useFiltering = getFiltering() || needsFiltering(hw) || isFixedSize();
+ 
+         // Query the texture matrix given our current filtering mode.
+-        float textureMatrix[16];
+         mSurfaceFlingerConsumer->setFilteringEnabled(useFiltering);
+         mSurfaceFlingerConsumer->getTransformMatrix(textureMatrix);
+ 
+@@ -2225,7 +2239,27 @@ Region Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime)
+             android_atomic_dec(&mQueuedFrames);
+         }
+ 
++        // The shadow queue entry and Consumer frame number now identify the
++        // same buffer, so latch the one-shot policy before removing the item.
++        mCurrentEinkUpdateMode = mQueueItems[0].mEinkUpdateMode;
++        static constexpr int32_t kSleepMarker = 0x04000000;
++        static constexpr int32_t kSleepSequenceMask = 0x03fff000;
++        static constexpr int32_t kSleepSequenceShift = 12;
++        if (mCurrentEinkUpdateMode != -1
++                && (mCurrentEinkUpdateMode & kSleepMarker) != 0) {
++            const int32_t sequence =
++                    (mCurrentEinkUpdateMode & kSleepSequenceMask)
++                    >> kSleepSequenceShift;
++            if (sequence != 0) {
++                ATRACE_INT("RIDI_SLEEP_layer_latch", sequence);
++                ALOGI("RIDI_SLEEP layer latch seq=%d layer=%s t=%" PRId64,
++                        sequence, getName().string(),
++                        systemTime(SYSTEM_TIME_MONOTONIC) / 1000000);
++            }
++        }
+         mQueueItems.removeAt(0);
++    } else {
++        mCurrentEinkUpdateMode = -1;
+     }
+ 
+ 
+@@ -2321,8 +2355,50 @@ Region Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime)
+         }
+     }
+ 
+-    // FIXME: postedRegion should be dirty & bounds
+-    Region dirtyRegion(Rect(s.active.w, s.active.h));
++    const Rect layerBounds(s.active.w, s.active.h);
++    Region dirtyRegion(layerBounds);
++
++    /*
++     * E70Q10: resolve the upstream "postedRegion should be dirty & bounds"
++     * FIXME.
++     *
++     * Reporting the whole layer as dirty is harmless when the compositor
++     * repaints every frame anyway, but this display cannot. The region returned
++     * here becomes the display's dirty region, which is what drives the EPDC
++     * update, so a one-pixel clock tick in a fullscreen window would otherwise
++     * request a full-panel refresh.
++     *
++     * The producer's damage is the invalidation area the application asked for.
++     * For a software-rendered View hierarchy that is ViewRootImpl's accumulated
++     * mDirty, which already unions an animating view's previous and current
++     * bounds - precisely what a partial E Ink waveform must cover so the old
++     * image is erased rather than left behind.
++     *
++     * Producer damage is expressed in buffer coordinates. Only use it when
++     * buffer and layer coordinates coincide: same size, no buffer transform, no
++     * crop and no scaling. Anything else falls back to the whole layer, which is
++     * always safe. Regions exposed by layers that moved, resized or vanished are
++     * added separately by computeVisibleRegions() and the removed-layer path, so
++     * they are not lost by narrowing this region.
++     */
++    if (!mFlinger->mForceFullDamage) {
++        const Region producerDamage(mSurfaceFlingerConsumer->getSurfaceDamage());
++        const Rect contentCrop(mSurfaceFlingerConsumer->getCurrentCrop());
++        const bool coordinatesMatch = mActiveBuffer != NULL &&
++                mCurrentTransform == 0 &&
++                mCurrentScalingMode == NATIVE_WINDOW_SCALING_MODE_FREEZE &&
++                (contentCrop.isEmpty() || contentCrop == layerBounds) &&
++                mActiveBuffer->getWidth() == s.active.w &&
++                mActiveBuffer->getHeight() == s.active.h;
++
++        if (coordinatesMatch && !producerDamage.isEmpty() &&
++                producerDamage.getBounds() != Rect::INVALID_RECT) {
++            const Region clipped(producerDamage.intersect(layerBounds));
++            if (!clipped.isEmpty()) {
++                dirtyRegion = clipped;
++            }
++        }
++    }
+ 
+     // transform the dirty region to window-manager space
+     outDirtyRegion = (getTransform().transform(dirtyRegion));
+diff --git a/services/surfaceflinger/Layer.h b/services/surfaceflinger/Layer.h
+index 2306d1a43a68a49effcec26cc7c6ad67df8b5a53..b54b1052c1d24a64e524c8df758fd1179dbf3dc4 100644
+--- a/services/surfaceflinger/Layer.h
++++ b/services/surfaceflinger/Layer.h
+@@ -745,6 +745,7 @@ private:
+     bool mBufferLatched = false;  // TODO: Use mActiveBuffer?
+     std::atomic<uint64_t> mCurrentFrameNumber;
+     uint64_t mPreviousFrameNumber; // Only accessed on the main thread.
++    int32_t mCurrentEinkUpdateMode;
+     bool mRefreshPending;
+     bool mFrameLatencyNeeded;
+     // Whether filtering is forced on or not
+diff --git a/services/surfaceflinger/RenderEngine/RenderEngine.cpp b/services/surfaceflinger/RenderEngine/RenderEngine.cpp
+index 6aa3fb2df03d0ee53b09d1ff59d2608e18552c18..524dc0b9cdf41bf772ba41aefac50bce8850f758 100644
+--- a/services/surfaceflinger/RenderEngine/RenderEngine.cpp
++++ b/services/surfaceflinger/RenderEngine/RenderEngine.cpp
+@@ -15,6 +15,7 @@
+  */
+ 
+ #include <log/log.h>
++#include <cutils/properties.h>
+ #include <ui/Rect.h>
+ #include <ui/Region.h>
+ 
+@@ -50,6 +51,7 @@ static bool findExtension(const char* exts, const char* name) {
+ }
+ 
+ RenderEngine* RenderEngine::create(EGLDisplay display, int hwcFormat, uint32_t featureFlags) {
++    const bool forceGles1 = property_get_bool("ro.sf.force_gles1", false);
+     // EGL_ANDROIDX_no_config_context is an experimental extension with no
+     // written specification. It will be replaced by something more formal.
+     // SurfaceFlinger is using it to allow a single EGLContext to render to
+@@ -62,10 +64,11 @@ RenderEngine* RenderEngine::create(EGLDisplay display, int hwcFormat, uint32_t f
+     // The code assumes that ES2 or later is available if this extension is
+     // supported.
+     EGLConfig config = EGL_NO_CONFIG;
+-    if (!findExtension(eglQueryStringImplementationANDROID(display, EGL_EXTENSIONS),
++    if (forceGles1 ||
++        (!findExtension(eglQueryStringImplementationANDROID(display, EGL_EXTENSIONS),
+                        "EGL_ANDROIDX_no_config_context") &&
+         !findExtension(eglQueryStringImplementationANDROID(display, EGL_EXTENSIONS),
+-                       "EGL_KHR_no_config_context")) {
++                       "EGL_KHR_no_config_context"))) {
+         config = chooseEglConfig(display, hwcFormat);
+     }
+ 
+@@ -77,13 +80,19 @@ RenderEngine* RenderEngine::create(EGLDisplay display, int hwcFormat, uint32_t f
+         LOG_ALWAYS_FATAL("can't query EGLConfig RENDERABLE_TYPE");
+     }
+     EGLint contextClientVersion = 0;
+-    if (renderableType & EGL_OPENGL_ES2_BIT) {
++    if (forceGles1 && (renderableType & EGL_OPENGL_ES_BIT)) {
++        contextClientVersion = 1;
++    } else if (renderableType & EGL_OPENGL_ES2_BIT) {
+         contextClientVersion = 2;
+     } else if (renderableType & EGL_OPENGL_ES_BIT) {
+         contextClientVersion = 1;
+     } else {
+         LOG_ALWAYS_FATAL("no supported EGL_RENDERABLE_TYPEs");
+     }
++    ALOGI("E70Q10_RENDERENGINE force_gles1=%d config=%p "
++          "renderable_type=0x%x requested_context=%d",
++          forceGles1 ? 1 : 0, config, renderableType,
++          contextClientVersion);
+ 
+     std::vector<EGLint> contextAttributes;
+     contextAttributes.reserve(6);
+@@ -130,18 +139,33 @@ RenderEngine* RenderEngine::create(EGLDisplay display, int hwcFormat, uint32_t f
+     // initialize the renderer while GL is current
+ 
+     RenderEngine* engine = NULL;
+-    switch (version) {
+-    case GLES_VERSION_1_0:
+-        engine = new GLES10RenderEngine();
+-        break;
+-    case GLES_VERSION_1_1:
+-        engine = new GLES11RenderEngine();
+-        break;
+-    case GLES_VERSION_2_0:
+-    case GLES_VERSION_3_0:
+-        engine = new GLES20RenderEngine(featureFlags);
+-        break;
++    if (forceGles1) {
++        LOG_ALWAYS_FATAL_IF(version != GLES_VERSION_1_0 &&
++                version != GLES_VERSION_1_1,
++                "E70Q10 explicit GLES1 context returned version=%s",
++                extensions.getVersion());
++        engine = version == GLES_VERSION_1_1 ?
++                static_cast<RenderEngine*>(new GLES11RenderEngine()) :
++                static_cast<RenderEngine*>(new GLES10RenderEngine());
++    } else {
++        switch (version) {
++        case GLES_VERSION_1_0:
++            engine = new GLES10RenderEngine();
++            break;
++        case GLES_VERSION_1_1:
++            engine = new GLES11RenderEngine();
++            break;
++        case GLES_VERSION_2_0:
++        case GLES_VERSION_3_0:
++            engine = new GLES20RenderEngine(featureFlags);
++            break;
++        }
+     }
++    LOG_ALWAYS_FATAL_IF(engine == NULL, "unsupported GLES version");
++    ALOGI("E70Q10_RENDERENGINE selected=%s actual_version=%s",
++          forceGles1 ? "GLES1-fixed-function" :
++          (version >= GLES_VERSION_2_0 ? "GLES20RenderEngine" : "GLES1"),
++          extensions.getVersion());
+     engine->setEGLHandles(config, ctxt);
+ 
+     ALOGI("OpenGL ES informations:");
+@@ -384,17 +408,46 @@ static status_t selectEGLConfig(EGLDisplay display, EGLint format,
+     EGLAttributeVector attribs;
+     if (renderableType) {
+         attribs[EGL_RENDERABLE_TYPE]            = renderableType;
+-        attribs[EGL_RECORDABLE_ANDROID]         = EGL_TRUE;
+         attribs[EGL_SURFACE_TYPE]               = EGL_WINDOW_BIT|EGL_PBUFFER_BIT;
+-        attribs[EGL_FRAMEBUFFER_TARGET_ANDROID] = EGL_TRUE;
+-        attribs[EGL_RED_SIZE]                   = 8;
+-        attribs[EGL_GREEN_SIZE]                 = 8;
+-        attribs[EGL_BLUE_SIZE]                  = 8;
+-        attribs[EGL_ALPHA_SIZE]                 = 8;
+-        wantedAttribute                         = EGL_NONE;
+-        wantedAttributeValue                    = EGL_NONE;
++        /*
++         * AGL's GLES1 RGB565 config predates the Android recordable and
++         * framebuffer-target attributes. Requiring them rejects the valid
++         * PixelFlinger config and can fall through to a GLES2-oriented query.
++         */
++        if (!(format == HAL_PIXEL_FORMAT_RGB_565 &&
++                renderableType == EGL_OPENGL_ES_BIT)) {
++            attribs[EGL_RECORDABLE_ANDROID]         = EGL_TRUE;
++            attribs[EGL_FRAMEBUFFER_TARGET_ANDROID] = EGL_TRUE;
++        }
++        if (format == HAL_PIXEL_FORMAT_RGB_565) {
++            attribs[EGL_RED_SIZE]               = 5;
++            attribs[EGL_GREEN_SIZE]             = 6;
++            attribs[EGL_BLUE_SIZE]              = 5;
++            attribs[EGL_ALPHA_SIZE]             = 0;
++            wantedAttribute                     = EGL_NATIVE_VISUAL_ID;
++            wantedAttributeValue                = format;
++        } else {
++            attribs[EGL_RED_SIZE]               = 8;
++            attribs[EGL_GREEN_SIZE]             = 8;
++            attribs[EGL_BLUE_SIZE]              = 8;
++            attribs[EGL_ALPHA_SIZE]             = 8;
++            wantedAttribute                     = EGL_NONE;
++            wantedAttributeValue                = EGL_NONE;
++        }
+     } else {
+         // if no renderable type specified, fallback to a simplified query
++        if (format == HAL_PIXEL_FORMAT_RGB_565) {
++            /*
++             * The E70Q10 framebuffer target is the physical RGB565 fb0 page.
++             * Do not allow EGL to satisfy the native-visual lookup with an
++             * 8888 config and an implicit conversion surface.
++             */
++            attribs[EGL_SURFACE_TYPE] = EGL_WINDOW_BIT | EGL_PBUFFER_BIT;
++            attribs[EGL_RED_SIZE] = 5;
++            attribs[EGL_GREEN_SIZE] = 6;
++            attribs[EGL_BLUE_SIZE] = 5;
++            attribs[EGL_ALPHA_SIZE] = 0;
++        }
+         wantedAttribute                         = EGL_NATIVE_VISUAL_ID;
+         wantedAttributeValue                    = format;
+     }
+@@ -413,11 +466,17 @@ static status_t selectEGLConfig(EGLDisplay display, EGLint format,
+ EGLConfig RenderEngine::chooseEglConfig(EGLDisplay display, int format) {
+     status_t err;
+     EGLConfig config;
++    const bool forceGles1 = property_get_bool("ro.sf.force_gles1", false);
+ 
+-    // First try to get an ES2 config
+-    err = selectEGLConfig(display, format, EGL_OPENGL_ES2_BIT, &config);
++    // GPU-less i.MX6SL products use AGL and present directly to an RGB565
++    // framebuffer. Select an explicit ES1, R5G6B5A0 native visual so EGL and
++    // the EPDC framebuffer agree on both bytes per pixel and stride.
++    err = selectEGLConfig(display, format,
++            forceGles1 ? EGL_OPENGL_ES_BIT : EGL_OPENGL_ES2_BIT, &config);
+     if (err != NO_ERROR) {
+-        // If ES2 fails, try ES1
++        LOG_ALWAYS_FATAL_IF(forceGles1,
++                "E70Q10 no RGB565 EGL_OPENGL_ES_BIT config; refusing GLES2 fallback");
++        // Normal products retain the standard ES2 -> ES1 -> simple fallback.
+         err = selectEGLConfig(display, format, EGL_OPENGL_ES_BIT, &config);
+         if (err != NO_ERROR) {
+             // still didn't work, probably because we're on the emulator...
+diff --git a/services/surfaceflinger/SurfaceFlinger.h b/services/surfaceflinger/SurfaceFlinger.h
+index acfad46526bc3e5cede75b1a0820b6d5730d22d9..be662212c43a96c7e65f69591cb80b20a17b60c1 100644
+--- a/services/surfaceflinger/SurfaceFlinger.h
++++ b/services/surfaceflinger/SurfaceFlinger.h
+@@ -17,6 +17,7 @@
+ #ifndef ANDROID_SURFACE_FLINGER_H
+ #define ANDROID_SURFACE_FLINGER_H
+ 
++#include <atomic>
+ #include <memory>
+ #include <stdint.h>
+ #include <sys/types.h>
+@@ -288,6 +289,12 @@ private:
+     virtual status_t getDisplayConfigs(const sp<IBinder>& display,
+             Vector<DisplayInfo>* configs);
+     virtual int getActiveConfig(const sp<IBinder>& display);
++    virtual int32_t getEinkSleepSubmitSequence() const;
++    virtual int32_t getEinkSleepOverlaySequence() const;
++    virtual status_t submitEinkSleepOverlay(int fd, int32_t width, int32_t height,
++            int32_t strideBytes, int32_t alphaLeft, int32_t alphaTop,
++            int32_t alphaRight, int32_t alphaBottom, int32_t dstLeft,
++            int32_t dstTop, int32_t sequence);
+     virtual status_t getDisplayColorModes(const sp<IBinder>& display,
+             Vector<android_color_mode_t>* configs);
+     virtual android_color_mode_t getActiveColorMode(const sp<IBinder>& display);
+@@ -714,6 +721,7 @@ private:
+     std::queue<CompositePresentTime> mCompositePresentTimes;
+ 
+     std::atomic<bool> mRefreshPending{false};
++    std::atomic<int32_t> mEinkSleepOverlaySequence{0};
+ 
+     /* ------------------------------------------------------------------------
+      * Feature prototyping
+diff --git a/services/surfaceflinger/SurfaceFlinger_hwc1.cpp b/services/surfaceflinger/SurfaceFlinger_hwc1.cpp
+index 247d80bc0755391f90381983238c2c4cea12182f..d7c45825b0e9750d82844fbeec845eaf3db96c32 100644
+--- a/services/surfaceflinger/SurfaceFlinger_hwc1.cpp
++++ b/services/surfaceflinger/SurfaceFlinger_hwc1.cpp
+@@ -23,6 +23,7 @@
+ #include <stdatomic.h>
+ #include <stdint.h>
+ #include <sys/types.h>
++#include <unistd.h>
+ 
+ #include <mutex>
+ 
+@@ -178,6 +179,12 @@ SurfaceFlinger::SurfaceFlinger()
+     maxFrameBufferAcquiredBuffers = getInt64< ISurfaceFlingerConfigs,
+             &ISurfaceFlingerConfigs::maxFrameBufferAcquiredBuffers>(2);
+ 
++    // The HWC1 implementation must start DispSync just like the HWC2 path.
++    // Without this, the model accepts hardware-vsync samples but its worker
++    // thread never runs, so EventThread falls back to one fake vsync per
++    // second and every UI transition appears to hang.
++    mPrimaryDispSync.init(hasSyncFramework, dispSyncPresentTimeOffset);
++
+     char value[PROPERTY_VALUE_MAX];
+ 
+     property_get("ro.bq.gpu_to_cpu_unsupported", value, "0");
+@@ -775,6 +782,55 @@ int SurfaceFlinger::getActiveConfig(const sp<IBinder>& display) {
+     return BAD_VALUE;
+ }
+ 
++int32_t SurfaceFlinger::getEinkSleepSubmitSequence() const {
++    return getHwComposer().getEinkSleepSubmitSequence();
++}
++
++int32_t SurfaceFlinger::getEinkSleepOverlaySequence() const {
++    return mEinkSleepOverlaySequence.load(std::memory_order_acquire);
++}
++
++status_t SurfaceFlinger::submitEinkSleepOverlay(int fd, int32_t width,
++        int32_t height, int32_t strideBytes, int32_t alphaLeft, int32_t alphaTop,
++        int32_t alphaRight, int32_t alphaBottom, int32_t dstLeft, int32_t dstTop,
++        int32_t sequence) {
++    if (fd < 0 || width <= 0 || height <= 0 || strideBytes != width * 4
++            || sequence <= 0) {
++        return BAD_VALUE;
++    }
++    const int ownedFd = dup(fd);
++    if (ownedFd < 0) {
++        return -errno;
++    }
++    /*
++     * Publish the generation before the potentially slow EPDC operation.  The
++     * screen-off barrier must distinguish this request from the preceding
++     * successful sleep even when SystemUI reaches us before WMS starts polling.
++     * A later fallback window uses a newer generation and supersedes a failed
++     * direct request.
++     */
++    mEinkSleepOverlaySequence.store(sequence, std::memory_order_release);
++    status_t overlayResult = NO_INIT;
++    sp<MessageBase> msg = new LambdaMessage([this, ownedFd, width, height,
++            strideBytes, alphaLeft, alphaTop, alphaRight, alphaBottom, dstLeft,
++            dstTop, sequence, &overlayResult] {
++        // This is the final panel operation before blank. It deliberately
++        // covers SystemUI as-is; the sleep path must not synthesize a separate
++        // navigation-bar removal composition first.
++        overlayResult = getHwComposer().submitEinkSleepOverlay(ownedFd, width,
++                height, strideBytes, alphaLeft, alphaTop, alphaRight,
++                alphaBottom, dstLeft, dstTop, sequence);
++    });
++    const status_t postResult = postMessageSync(msg);
++    close(ownedFd);
++    const status_t result = postResult == NO_ERROR ? overlayResult : postResult;
++    if (result != NO_ERROR) {
++        ALOGE("RIDI_SLEEP direct overlay rejected seq=%d result=%d",
++                sequence, result);
++    }
++    return result;
++}
++
+ void SurfaceFlinger::setActiveConfigInternal(const sp<DisplayDevice>& hw, int mode) {
+     ALOGD("Set active config mode=%d, type=%d flinger=%p", mode, hw->getDisplayType(),
+           this);
+@@ -1499,6 +1555,26 @@ void SurfaceFlinger::doComposition() {
+             // transform the dirty region into this screen's coordinate space
+             const Region dirtyRegion(hw->getDirtyRegion(repaintEverything));
+ 
++            /*
++             * E70Q10: hand this region to the HWC as the framebuffer target's
++             * surfaceDamage before the frame is posted.
++             *
++             * dirtyRegion is the authoritative screen-space damage: it unions
++             * what the producers repainted with the regions exposed by layers
++             * that moved, resized or disappeared. On this E Ink panel a partial
++             * waveform must cover an object's previous position as well as its
++             * new one, otherwise the old pixels stay visible. Per-layer producer
++             * damage cannot express a vacated area, because a dismissed popup is
++             * simply absent from the layer list.
++             *
++             * doDisplayComposition() below widens its own copy to satisfy the
++             * EGL swap flags, so the unexpanded region has to be captured here.
++             */
++            const int32_t hwcId = hw->getHwcDisplayId();
++            if (hwcId >= 0) {
++                getHwComposer().setFramebufferTargetDamage(hwcId, dirtyRegion);
++            }
++
+             // repaint the framebuffer (if needed)
+             doDisplayComposition(hw, dirtyRegion);
+ 
+@@ -2138,10 +2214,22 @@ void SurfaceFlinger::doDisplayComposition(const sp<const DisplayDevice>& hw,
+     hw->swapRegion.orSelf(dirtyRegion);
+ 
+     uint32_t flags = hw->getFlags();
+-    if (flags & DisplayDevice::SWAP_RECTANGLE) {
+-        // we can redraw only what's dirty, but since SWAP_RECTANGLE only
+-        // takes a rectangle, we must make sure to update that whole
+-        // rectangle in that case
++    const bool willPostFramebufferTarget = !isHwcDisplay ||
++            getHwComposer().initCheck() != NO_ERROR ||
++            (getHwComposer().hasGlesComposition(hw->getHwcDisplayId()) &&
++             getHwComposer().supportsFramebufferTarget());
++    if (hw->usesRidiBufferAgePartial()) {
++        // E70Q10 buffer-age repair runs before rasterization and never sets the
++        // generic SWAP_RECTANGLE flag used by DisplayDevice::flip().
++        dirtyRegion.set(hw->swapRegion.bounds());
++        if (willPostFramebufferTarget &&
++                !hw->preparePartialComposition(dirtyRegion)) {
++            dirtyRegion.set(hw->bounds());
++            hw->swapRegion = dirtyRegion;
++            hw->preparePartialComposition(dirtyRegion);
++        }
++    } else if (flags & DisplayDevice::SWAP_RECTANGLE) {
++        // Preserve the legacy behavior on boards that already use it.
+         dirtyRegion.set(hw->swapRegion.bounds());
+     } else {
+         if (flags & DisplayDevice::PARTIAL_UPDATES) {
+@@ -2308,7 +2396,14 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<const DisplayDevice>& hw, const
+ void SurfaceFlinger::drawWormhole(const sp<const DisplayDevice>& hw, const Region& region) const {
+     const int32_t height = hw->getHeight();
+     RenderEngine& engine(getRenderEngine());
+-    engine.fillRegionWithColor(region, height, 0, 0, 0, 0);
++    if (property_get_bool("ro.ridi.eink_mode", false)) {
++        // Undefined display area is a white sheet on E-Ink.  Leaving the
++        // stock transparent-black wormhole here can produce a persistent
++        // black frame when the next stage does not submit another update.
++        engine.fillRegionWithColor(region, height, 1, 1, 1, 1);
++    } else {
++        engine.fillRegionWithColor(region, height, 0, 0, 0, 0);
++    }
+ }
+ 
+ status_t SurfaceFlinger::addClientLayer(const sp<Client>& client,
+@@ -3947,7 +4042,8 @@ status_t SurfaceFlinger::captureScreenImplLocked(
+                     // this binds the given EGLImage as a framebuffer for the
+                     // duration of this scope.
+                     RenderEngine::BindImageAsFramebuffer imageBond(getRenderEngine(), image);
+-                    if (imageBond.getStatus() == NO_ERROR) {
++                    const status_t fboStatus = imageBond.getStatus();
++                    if (fboStatus == NO_ERROR) {
+                         // this will in fact render into our dequeued buffer
+                         // via an FBO, which means we didn't have to create
+                         // an EGLSurface and therefore we're not
+diff --git a/services/surfaceflinger/surfaceflinger.rc b/services/surfaceflinger/surfaceflinger.rc
+index aea602bba489ac481b202d798daed8f7da99af49..c05a803990444c440f5745b7474deae947aa4e41 100644
+--- a/services/surfaceflinger/surfaceflinger.rc
++++ b/services/surfaceflinger/surfaceflinger.rc
+@@ -1,9 +1,8 @@
+ service surfaceflinger /system/bin/surfaceflinger
+-    class core animation
++    class core
+     user system
+-    group graphics drmrpc readproc
++    group graphics
+     onrestart restart zygote
+-    writepid /dev/stune/foreground/tasks
+-    socket pdx/system/vr/display/client     stream 0666 system graphics u:object_r:pdx_display_client_endpoint_socket:s0
+-    socket pdx/system/vr/display/manager    stream 0666 system graphics u:object_r:pdx_display_manager_endpoint_socket:s0
+-    socket pdx/system/vr/display/vsync      stream 0666 system graphics u:object_r:pdx_display_vsync_endpoint_socket:s0
++
++on boot
++    setprop e70q10.sf_rc_loaded 1

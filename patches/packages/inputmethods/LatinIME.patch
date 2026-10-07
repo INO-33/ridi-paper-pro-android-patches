@@ -1,0 +1,1250 @@
+diff --git a/java/Android.mk b/java/Android.mk
+index 154f3a20ca94fabacf064dfcac67e4d2d29b0921..e4fd829df12e731ef9588922a2e111489dcaf4ac 100644
+--- a/java/Android.mk
++++ b/java/Android.mk
+@@ -17,30 +17,15 @@ include $(CLEAR_VARS)
+ 
+ LOCAL_MODULE_TAGS := optional
+ 
+-LOCAL_SRC_FILES := $(call all-java-files-under, src ../java-overridable/src)
++# Lightweight e-reader IME. Keep the LatinIME module/package identity so existing
++# product configuration and selected-input-method state continue to work.
++LOCAL_SRC_FILES := $(call all-java-files-under, lite/src)
++LOCAL_RESOURCE_DIR := $(LOCAL_PATH)/lite/res
++LOCAL_MANIFEST_FILE := lite/AndroidManifest.xml
+ 
+ LOCAL_PACKAGE_NAME := LatinIME
+-
+ LOCAL_CERTIFICATE := shared
+-
+-LOCAL_JNI_SHARED_LIBRARIES := libjni_latinime
+-
+-LOCAL_STATIC_JAVA_LIBRARIES := \
+-        android-common inputmethod-common jsr305 latinime-common
+-
+-LOCAL_STATIC_ANDROID_LIBRARIES := \
+-        android-support-v4
+-
+ LOCAL_USE_AAPT2 := true
+-
+-# Do not compress dictionary files to mmap dict data runtime
+-LOCAL_AAPT_FLAGS := -0 .dict
+-
+-# Include all the resources regardless of system supported locales
+-LOCAL_AAPT_INCLUDE_ALL_RESOURCES := true
+-
+ LOCAL_SDK_VERSION := current
+ 
+-LOCAL_PROGUARD_FLAG_FILES := proguard.flags
+-
+ include $(BUILD_PACKAGE)
+diff --git a/java/lite/AndroidManifest.xml b/java/lite/AndroidManifest.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..b0b55e50e034b7bf8a733e1d180103bf77a34c8a
+--- /dev/null
++++ b/java/lite/AndroidManifest.xml
+@@ -0,0 +1,28 @@
++<?xml version="1.0" encoding="utf-8"?>
++<manifest xmlns:android="http://schemas.android.com/apk/res/android"
++    package="com.android.inputmethod.latin"
++    coreApp="true">
++
++    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="26" />
++
++    <application
++        android:allowBackup="false"
++        android:defaultToDeviceProtectedStorage="true"
++        android:directBootAware="true"
++        android:label="@string/ime_name"
++        android:supportsRtl="true">
++        <service
++            android:name=".LatinIME"
++            android:directBootAware="true"
++            android:exported="true"
++            android:label="@string/ime_name"
++            android:permission="android.permission.BIND_INPUT_METHOD">
++            <intent-filter>
++                <action android:name="android.view.InputMethod" />
++            </intent-filter>
++            <meta-data
++                android:name="android.view.im"
++                android:resource="@xml/method" />
++        </service>
++    </application>
++</manifest>
+diff --git a/java/lite/res/drawable/key_background.xml b/java/lite/res/drawable/key_background.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..4d902bca5f3e885732d71a9c762a72e739245d21
+--- /dev/null
++++ b/java/lite/res/drawable/key_background.xml
+@@ -0,0 +1,17 @@
++<?xml version="1.0" encoding="utf-8"?>
++<selector xmlns:android="http://schemas.android.com/apk/res/android">
++    <item android:state_pressed="true">
++        <shape android:shape="rectangle">
++            <solid android:color="@color/key_background_pressed" />
++            <stroke android:width="1dp" android:color="@color/key_border" />
++            <corners android:radius="2dp" />
++        </shape>
++    </item>
++    <item>
++        <shape android:shape="rectangle">
++            <solid android:color="@color/key_background" />
++            <stroke android:width="1dp" android:color="@color/key_border" />
++            <corners android:radius="2dp" />
++        </shape>
++    </item>
++</selector>
+diff --git a/java/lite/res/drawable/keyboard_background.xml b/java/lite/res/drawable/keyboard_background.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..c349660d89f2402b34d795fec2748f61ab793bb7
+--- /dev/null
++++ b/java/lite/res/drawable/keyboard_background.xml
+@@ -0,0 +1,4 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <solid android:color="@color/keyboard_background" />
++</shape>
+diff --git a/java/lite/res/layout/input.xml b/java/lite/res/layout/input.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..eba15a5a70ccd73ca5cb726e237f13cca6e340eb
+--- /dev/null
++++ b/java/lite/res/layout/input.xml
+@@ -0,0 +1,16 @@
++<?xml version="1.0" encoding="utf-8"?>
++<android.inputmethodservice.KeyboardView
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@+id/keyboard_view"
++    android:layout_width="match_parent"
++    android:layout_height="wrap_content"
++    android:background="@drawable/keyboard_background"
++    android:keyBackground="@drawable/key_background"
++    android:keyTextColor="@color/key_text"
++    android:keyTextSize="@dimen/key_text_size"
++    android:labelTextSize="@dimen/key_label_text_size"
++    android:paddingTop="2dp"
++    android:paddingBottom="4dp"
++    android:shadowColor="@android:color/transparent"
++    android:shadowRadius="0"
++    android:verticalCorrection="0dp" />
+diff --git a/java/lite/res/values/bools.xml b/java/lite/res/values/bools.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..a035de65546f975d95885ffa1cdf775c535a38f3
+--- /dev/null
++++ b/java/lite/res/values/bools.xml
+@@ -0,0 +1,4 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <bool name="im_is_default">true</bool>
++</resources>
+diff --git a/java/lite/res/values/config.xml b/java/lite/res/values/config.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..7f0dff13d15fcbc2e8a3216c24780072f71bde89
+--- /dev/null
++++ b/java/lite/res/values/config.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="ime_name">한글 기본 입력기</string>
++    <color name="key_text">#FF111111</color>
++    <color name="keyboard_background">#FFF2F2F2</color>
++    <color name="key_background">#FFFFFFFF</color>
++    <color name="key_background_pressed">#FFD0D0D0</color>
++    <color name="key_border">#FF777777</color>
++    <dimen name="key_text_size">20sp</dimen>
++    <dimen name="key_label_text_size">17sp</dimen>
++</resources>
+diff --git a/java/lite/res/xml/email.xml b/java/lite/res/xml/email.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..ce42a107ec6d1b6910efe1404398eb1375b6a522
+--- /dev/null
++++ b/java/lite/res/xml/email.xml
+@@ -0,0 +1,42 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Keyboard xmlns:android="http://schemas.android.com/apk/res/android"
++    android:keyWidth="10%p" android:keyHeight="48dp"
++    android:horizontalGap="0px" android:verticalGap="2dp">
++    <Row>
++        <Key android:codes="-5335" android:keyLabel="←" android:keyWidth="10%p" android:isRepeatable="true"/>
++        <Key android:codes="-5337" android:keyLabel="▼" android:keyWidth="20%p"/>
++        <Key android:codes="64" android:keyLabel="@" android:keyWidth="15%p"/>
++        <Key android:codes="-5338" android:keyLabel=".com" android:keyWidth="20%p"/>
++        <Key android:codes="-5339" android:keyLabel=".net" android:keyWidth="20%p"/>
++        <Key android:codes="-5336" android:keyLabel="→" android:keyWidth="15%p" android:isRepeatable="true"/>
++    </Row>
++    <Row>
++        <Key android:codes="113" android:keyLabel="q"/><Key android:codes="119" android:keyLabel="w"/>
++        <Key android:codes="101" android:keyLabel="e"/><Key android:codes="114" android:keyLabel="r"/>
++        <Key android:codes="116" android:keyLabel="t"/><Key android:codes="121" android:keyLabel="y"/>
++        <Key android:codes="117" android:keyLabel="u"/><Key android:codes="105" android:keyLabel="i"/>
++        <Key android:codes="111" android:keyLabel="o"/><Key android:codes="112" android:keyLabel="p"/>
++    </Row>
++    <Row>
++        <Key android:codes="97" android:keyLabel="a" android:horizontalGap="5%p"/>
++        <Key android:codes="115" android:keyLabel="s"/><Key android:codes="100" android:keyLabel="d"/>
++        <Key android:codes="102" android:keyLabel="f"/><Key android:codes="103" android:keyLabel="g"/>
++        <Key android:codes="104" android:keyLabel="h"/><Key android:codes="106" android:keyLabel="j"/>
++        <Key android:codes="107" android:keyLabel="k"/><Key android:codes="108" android:keyLabel="l"/>
++    </Row>
++    <Row>
++        <Key android:codes="-1" android:keyLabel="⇧" android:keyWidth="15%p" android:isModifier="true" android:isSticky="true"/>
++        <Key android:codes="122" android:keyLabel="z"/><Key android:codes="120" android:keyLabel="x"/>
++        <Key android:codes="99" android:keyLabel="c"/><Key android:codes="118" android:keyLabel="v"/>
++        <Key android:codes="98" android:keyLabel="b"/><Key android:codes="110" android:keyLabel="n"/>
++        <Key android:codes="109" android:keyLabel="m"/>
++        <Key android:codes="-5" android:keyLabel="⌫" android:keyWidth="15%p" android:isRepeatable="true"/>
++    </Row>
++    <Row>
++        <Key android:codes="-2" android:keyLabel="123" android:keyWidth="15%p"/>
++        <Key android:codes="32" android:keyLabel="space" android:keyWidth="45%p" android:isRepeatable="true"/>
++        <Key android:codes="44" android:keyLabel="," android:keyWidth="10%p"/>
++        <Key android:codes="46" android:keyLabel="." android:keyWidth="10%p"/>
++        <Key android:codes="10" android:keyLabel="완료" android:keyWidth="20%p"/>
++    </Row>
++</Keyboard>
+diff --git a/java/lite/res/xml/korean.xml b/java/lite/res/xml/korean.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..6f37c18685a78d1157f870f4c99d4ef5fda8bf1b
+--- /dev/null
++++ b/java/lite/res/xml/korean.xml
+@@ -0,0 +1,40 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Keyboard xmlns:android="http://schemas.android.com/apk/res/android"
++    android:keyWidth="10%p" android:keyHeight="48dp"
++    android:horizontalGap="0px" android:verticalGap="2dp">
++    <Row>
++        <Key android:codes="-5335" android:keyLabel="←" android:keyWidth="15%p" android:isRepeatable="true" />
++        <Key android:codes="-5337" android:keyLabel="▼" android:keyWidth="70%p" />
++        <Key android:codes="-5336" android:keyLabel="→" android:keyWidth="15%p" android:isRepeatable="true" />
++    </Row>
++    <Row>
++        <Key android:codes="113" android:keyLabel="ㅂ"/><Key android:codes="119" android:keyLabel="ㅈ"/>
++        <Key android:codes="101" android:keyLabel="ㄷ"/><Key android:codes="114" android:keyLabel="ㄱ"/>
++        <Key android:codes="116" android:keyLabel="ㅅ"/><Key android:codes="121" android:keyLabel="ㅛ"/>
++        <Key android:codes="117" android:keyLabel="ㅕ"/><Key android:codes="105" android:keyLabel="ㅑ"/>
++        <Key android:codes="111" android:keyLabel="ㅐ"/><Key android:codes="112" android:keyLabel="ㅔ"/>
++    </Row>
++    <Row>
++        <Key android:codes="97" android:keyLabel="ㅁ" android:horizontalGap="5%p"/>
++        <Key android:codes="115" android:keyLabel="ㄴ"/><Key android:codes="100" android:keyLabel="ㅇ"/>
++        <Key android:codes="102" android:keyLabel="ㄹ"/><Key android:codes="103" android:keyLabel="ㅎ"/>
++        <Key android:codes="104" android:keyLabel="ㅗ"/><Key android:codes="106" android:keyLabel="ㅓ"/>
++        <Key android:codes="107" android:keyLabel="ㅏ"/><Key android:codes="108" android:keyLabel="ㅣ"/>
++    </Row>
++    <Row>
++        <Key android:codes="-1" android:keyLabel="⇧" android:keyWidth="15%p" android:isModifier="true" android:isSticky="true"/>
++        <Key android:codes="122" android:keyLabel="ㅋ"/><Key android:codes="120" android:keyLabel="ㅌ"/>
++        <Key android:codes="99" android:keyLabel="ㅊ"/><Key android:codes="118" android:keyLabel="ㅍ"/>
++        <Key android:codes="98" android:keyLabel="ㅠ"/><Key android:codes="110" android:keyLabel="ㅜ"/>
++        <Key android:codes="109" android:keyLabel="ㅡ"/>
++        <Key android:codes="-5" android:keyLabel="⌫" android:keyWidth="15%p" android:isRepeatable="true"/>
++    </Row>
++    <Row>
++        <Key android:codes="-2" android:keyLabel="123" android:keyWidth="12%p"/>
++        <Key android:codes="-6" android:keyLabel="ABC" android:keyWidth="16%p"/>
++        <Key android:codes="32" android:keyLabel="space" android:keyWidth="32%p" android:isRepeatable="true"/>
++        <Key android:codes="44" android:keyLabel="," android:keyWidth="10%p"/>
++        <Key android:codes="46" android:keyLabel="." android:keyWidth="10%p"/>
++        <Key android:codes="10" android:keyLabel="완료" android:keyWidth="20%p"/>
++    </Row>
++</Keyboard>
+diff --git a/java/lite/res/xml/method.xml b/java/lite/res/xml/method.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..6f38efc04d05f3d7ef887f4bd09d93951104b318
+--- /dev/null
++++ b/java/lite/res/xml/method.xml
+@@ -0,0 +1,14 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Default IME discovery requires a keyboard subtype matching the locale,
++     or an English fallback. The service handles both layouts internally. -->
++<input-method xmlns:android="http://schemas.android.com/apk/res/android"
++    android:isDefault="@bool/im_is_default"
++    android:supportsSwitchingToNextInputMethod="false">
++    <subtype
++        android:imeSubtypeLocale="ko_KR"
++        android:imeSubtypeMode="keyboard" />
++    <subtype
++        android:imeSubtypeLocale="en_US"
++        android:imeSubtypeMode="keyboard"
++        android:isAsciiCapable="true" />
++</input-method>
+diff --git a/java/lite/res/xml/qwerty.xml b/java/lite/res/xml/qwerty.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..cd2304f0fad5698ee486527f74cdb516f82bd404
+--- /dev/null
++++ b/java/lite/res/xml/qwerty.xml
+@@ -0,0 +1,40 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Keyboard xmlns:android="http://schemas.android.com/apk/res/android"
++    android:keyWidth="10%p" android:keyHeight="48dp"
++    android:horizontalGap="0px" android:verticalGap="2dp">
++    <Row>
++        <Key android:codes="-5335" android:keyLabel="←" android:keyWidth="15%p" android:isRepeatable="true"/>
++        <Key android:codes="-5337" android:keyLabel="▼" android:keyWidth="70%p"/>
++        <Key android:codes="-5336" android:keyLabel="→" android:keyWidth="15%p" android:isRepeatable="true"/>
++    </Row>
++    <Row>
++        <Key android:codes="113" android:keyLabel="q"/><Key android:codes="119" android:keyLabel="w"/>
++        <Key android:codes="101" android:keyLabel="e"/><Key android:codes="114" android:keyLabel="r"/>
++        <Key android:codes="116" android:keyLabel="t"/><Key android:codes="121" android:keyLabel="y"/>
++        <Key android:codes="117" android:keyLabel="u"/><Key android:codes="105" android:keyLabel="i"/>
++        <Key android:codes="111" android:keyLabel="o"/><Key android:codes="112" android:keyLabel="p"/>
++    </Row>
++    <Row>
++        <Key android:codes="97" android:keyLabel="a" android:horizontalGap="5%p"/>
++        <Key android:codes="115" android:keyLabel="s"/><Key android:codes="100" android:keyLabel="d"/>
++        <Key android:codes="102" android:keyLabel="f"/><Key android:codes="103" android:keyLabel="g"/>
++        <Key android:codes="104" android:keyLabel="h"/><Key android:codes="106" android:keyLabel="j"/>
++        <Key android:codes="107" android:keyLabel="k"/><Key android:codes="108" android:keyLabel="l"/>
++    </Row>
++    <Row>
++        <Key android:codes="-1" android:keyLabel="⇧" android:keyWidth="15%p" android:isModifier="true" android:isSticky="true"/>
++        <Key android:codes="122" android:keyLabel="z"/><Key android:codes="120" android:keyLabel="x"/>
++        <Key android:codes="99" android:keyLabel="c"/><Key android:codes="118" android:keyLabel="v"/>
++        <Key android:codes="98" android:keyLabel="b"/><Key android:codes="110" android:keyLabel="n"/>
++        <Key android:codes="109" android:keyLabel="m"/>
++        <Key android:codes="-5" android:keyLabel="⌫" android:keyWidth="15%p" android:isRepeatable="true"/>
++    </Row>
++    <Row>
++        <Key android:codes="-2" android:keyLabel="123" android:keyWidth="12%p"/>
++        <Key android:codes="-6" android:keyLabel="한글" android:keyWidth="16%p"/>
++        <Key android:codes="32" android:keyLabel="space" android:keyWidth="32%p" android:isRepeatable="true"/>
++        <Key android:codes="44" android:keyLabel="," android:keyWidth="10%p"/>
++        <Key android:codes="46" android:keyLabel="." android:keyWidth="10%p"/>
++        <Key android:codes="10" android:keyLabel="완료" android:keyWidth="20%p"/>
++    </Row>
++</Keyboard>
+diff --git a/java/lite/res/xml/qwerty_only.xml b/java/lite/res/xml/qwerty_only.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..e6c979c457c8136af2c740626ffb921fb5636db7
+--- /dev/null
++++ b/java/lite/res/xml/qwerty_only.xml
+@@ -0,0 +1,39 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Keyboard xmlns:android="http://schemas.android.com/apk/res/android"
++    android:keyWidth="10%p" android:keyHeight="48dp"
++    android:horizontalGap="0px" android:verticalGap="2dp">
++    <Row>
++        <Key android:codes="-5335" android:keyLabel="←" android:keyWidth="15%p" android:isRepeatable="true"/>
++        <Key android:codes="-5337" android:keyLabel="▼" android:keyWidth="70%p"/>
++        <Key android:codes="-5336" android:keyLabel="→" android:keyWidth="15%p" android:isRepeatable="true"/>
++    </Row>
++    <Row>
++        <Key android:codes="113" android:keyLabel="q"/><Key android:codes="119" android:keyLabel="w"/>
++        <Key android:codes="101" android:keyLabel="e"/><Key android:codes="114" android:keyLabel="r"/>
++        <Key android:codes="116" android:keyLabel="t"/><Key android:codes="121" android:keyLabel="y"/>
++        <Key android:codes="117" android:keyLabel="u"/><Key android:codes="105" android:keyLabel="i"/>
++        <Key android:codes="111" android:keyLabel="o"/><Key android:codes="112" android:keyLabel="p"/>
++    </Row>
++    <Row>
++        <Key android:codes="97" android:keyLabel="a" android:horizontalGap="5%p"/>
++        <Key android:codes="115" android:keyLabel="s"/><Key android:codes="100" android:keyLabel="d"/>
++        <Key android:codes="102" android:keyLabel="f"/><Key android:codes="103" android:keyLabel="g"/>
++        <Key android:codes="104" android:keyLabel="h"/><Key android:codes="106" android:keyLabel="j"/>
++        <Key android:codes="107" android:keyLabel="k"/><Key android:codes="108" android:keyLabel="l"/>
++    </Row>
++    <Row>
++        <Key android:codes="-1" android:keyLabel="⇧" android:keyWidth="15%p" android:isModifier="true" android:isSticky="true"/>
++        <Key android:codes="122" android:keyLabel="z"/><Key android:codes="120" android:keyLabel="x"/>
++        <Key android:codes="99" android:keyLabel="c"/><Key android:codes="118" android:keyLabel="v"/>
++        <Key android:codes="98" android:keyLabel="b"/><Key android:codes="110" android:keyLabel="n"/>
++        <Key android:codes="109" android:keyLabel="m"/>
++        <Key android:codes="-5" android:keyLabel="⌫" android:keyWidth="15%p" android:isRepeatable="true"/>
++    </Row>
++    <Row>
++        <Key android:codes="-2" android:keyLabel="123" android:keyWidth="15%p"/>
++        <Key android:codes="32" android:keyLabel="space" android:keyWidth="45%p" android:isRepeatable="true"/>
++        <Key android:codes="44" android:keyLabel="," android:keyWidth="10%p"/>
++        <Key android:codes="46" android:keyLabel="." android:keyWidth="10%p"/>
++        <Key android:codes="10" android:keyLabel="완료" android:keyWidth="20%p"/>
++    </Row>
++</Keyboard>
+diff --git a/java/lite/res/xml/symbols.xml b/java/lite/res/xml/symbols.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..9315fc92b371ef535e49047f290293e0f3a1171c
+--- /dev/null
++++ b/java/lite/res/xml/symbols.xml
+@@ -0,0 +1,39 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Keyboard xmlns:android="http://schemas.android.com/apk/res/android"
++    android:keyWidth="10%p" android:keyHeight="48dp"
++    android:horizontalGap="0px" android:verticalGap="2dp">
++    <Row>
++        <Key android:codes="-5335" android:keyLabel="←" android:keyWidth="15%p" android:isRepeatable="true"/>
++        <Key android:codes="-5337" android:keyLabel="▼" android:keyWidth="70%p"/>
++        <Key android:codes="-5336" android:keyLabel="→" android:keyWidth="15%p" android:isRepeatable="true"/>
++    </Row>
++    <Row>
++        <Key android:codes="49" android:keyLabel="1"/><Key android:codes="50" android:keyLabel="2"/>
++        <Key android:codes="51" android:keyLabel="3"/><Key android:codes="52" android:keyLabel="4"/>
++        <Key android:codes="53" android:keyLabel="5"/><Key android:codes="54" android:keyLabel="6"/>
++        <Key android:codes="55" android:keyLabel="7"/><Key android:codes="56" android:keyLabel="8"/>
++        <Key android:codes="57" android:keyLabel="9"/><Key android:codes="48" android:keyLabel="0"/>
++    </Row>
++    <Row>
++        <Key android:codes="33" android:keyLabel="!" android:horizontalGap="5%p"/>
++        <Key android:codes="64" android:keyLabel="@"/><Key android:codes="35" android:keyLabel="#"/>
++        <Key android:codes="36" android:keyLabel="$"/><Key android:codes="37" android:keyLabel="%"/>
++        <Key android:codes="94" android:keyLabel="^"/><Key android:codes="38" android:keyLabel="&amp;"/>
++        <Key android:codes="42" android:keyLabel="*"/><Key android:codes="45" android:keyLabel="-"/>
++    </Row>
++    <Row>
++        <Key android:codes="-1" android:keyLabel="+&lt;" android:keyWidth="15%p" android:isModifier="true" android:isSticky="true"/>
++        <Key android:codes="61" android:keyLabel="="/><Key android:codes="59" android:keyLabel=";"/>
++        <Key android:codes="58" android:keyLabel=":"/><Key android:codes="39" android:keyLabel="'"/>
++        <Key android:codes="34" android:keyLabel="&quot;"/><Key android:codes="47" android:keyLabel="/"/>
++        <Key android:codes="63" android:keyLabel="?"/>
++        <Key android:codes="-5" android:keyLabel="⌫" android:keyWidth="15%p" android:isRepeatable="true"/>
++    </Row>
++    <Row>
++        <Key android:codes="-2" android:keyLabel="ABC" android:keyWidth="15%p"/>
++        <Key android:codes="44" android:keyLabel="," android:keyWidth="10%p"/>
++        <Key android:codes="32" android:keyLabel="space" android:keyWidth="45%p" android:isRepeatable="true"/>
++        <Key android:codes="46" android:keyLabel="." android:keyWidth="10%p"/>
++        <Key android:codes="10" android:keyLabel="완료" android:keyWidth="20%p"/>
++    </Row>
++</Keyboard>
+diff --git a/java/lite/res/xml/symbols_shift.xml b/java/lite/res/xml/symbols_shift.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..c73cdfebce997ca7a74ee4c0e856bd86705f7083
+--- /dev/null
++++ b/java/lite/res/xml/symbols_shift.xml
+@@ -0,0 +1,39 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Keyboard xmlns:android="http://schemas.android.com/apk/res/android"
++    android:keyWidth="10%p" android:keyHeight="48dp"
++    android:horizontalGap="0px" android:verticalGap="2dp">
++    <Row>
++        <Key android:codes="-5335" android:keyLabel="←" android:keyWidth="15%p" android:isRepeatable="true"/>
++        <Key android:codes="-5337" android:keyLabel="▼" android:keyWidth="70%p"/>
++        <Key android:codes="-5336" android:keyLabel="→" android:keyWidth="15%p" android:isRepeatable="true"/>
++    </Row>
++    <Row>
++        <Key android:codes="126" android:keyLabel="~"/><Key android:codes="8226" android:keyLabel="•"/>
++        <Key android:codes="96" android:keyLabel="`"/><Key android:codes="8251" android:keyLabel="※"/>
++        <Key android:codes="247" android:keyLabel="÷"/><Key android:codes="215" android:keyLabel="×"/>
++        <Key android:codes="40" android:keyLabel="("/><Key android:codes="41" android:keyLabel=")"/>
++        <Key android:codes="123" android:keyLabel="{"/><Key android:codes="125" android:keyLabel="}"/>
++    </Row>
++    <Row>
++        <Key android:codes="43" android:keyLabel="+" android:horizontalGap="5%p"/>
++        <Key android:codes="9825" android:keyLabel="♡"/><Key android:codes="9829" android:keyLabel="♥"/>
++        <Key android:codes="9734" android:keyLabel="☆"/><Key android:codes="9733" android:keyLabel="★"/>
++        <Key android:codes="9831" android:keyLabel="♧"/><Key android:codes="9827" android:keyLabel="♣"/>
++        <Key android:codes="91" android:keyLabel="["/><Key android:codes="93" android:keyLabel="]"/>
++    </Row>
++    <Row>
++        <Key android:codes="-1" android:keyLabel="123" android:keyWidth="15%p" android:isModifier="true" android:isSticky="true"/>
++        <Key android:codes="8482" android:keyLabel="™"/><Key android:codes="169" android:keyLabel="©"/>
++        <Key android:codes="95" android:keyLabel="_"/><Key android:codes="92" android:keyLabel="&#92;"/>
++        <Key android:codes="124" android:keyLabel="|"/><Key android:codes="60" android:keyLabel="&lt;"/>
++        <Key android:codes="62" android:keyLabel="&gt;"/>
++        <Key android:codes="-5" android:keyLabel="⌫" android:keyWidth="15%p" android:isRepeatable="true"/>
++    </Row>
++    <Row>
++        <Key android:codes="-2" android:keyLabel="ABC" android:keyWidth="15%p"/>
++        <Key android:codes="44" android:keyLabel="," android:keyWidth="10%p"/>
++        <Key android:codes="32" android:keyLabel="space" android:keyWidth="45%p" android:isRepeatable="true"/>
++        <Key android:codes="46" android:keyLabel="." android:keyWidth="10%p"/>
++        <Key android:codes="10" android:keyLabel="완료" android:keyWidth="20%p"/>
++    </Row>
++</Keyboard>
+diff --git a/java/lite/src/com/android/inputmethod/latin/KoreanAutomata.java b/java/lite/src/com/android/inputmethod/latin/KoreanAutomata.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..28ca9a9c072d3e6ac092de900fcd97107c3e3b8a
+--- /dev/null
++++ b/java/lite/src/com/android/inputmethod/latin/KoreanAutomata.java
+@@ -0,0 +1,303 @@
++/*
++ * Copyright (C) 2026
++ * SPDX-License-Identifier: Apache-2.0
++ */
++package com.android.inputmethod.latin;
++
++/** Minimal two-set Korean automata for an e-reader keyboard. */
++final class KoreanAutomata {
++    static final class Result {
++        final String committed;
++        final String composing;
++
++        Result(final String committed, final String composing) {
++            this.committed = committed;
++            this.composing = composing;
++        }
++    }
++
++    private static final char[] INITIAL_JAMO = {
++            'ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ',
++            'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'
++    };
++    private static final char[] MEDIAL_JAMO = {
++            'ㅏ', 'ㅐ', 'ㅑ', 'ㅒ', 'ㅓ', 'ㅔ', 'ㅕ', 'ㅖ', 'ㅗ', 'ㅘ',
++            'ㅙ', 'ㅚ', 'ㅛ', 'ㅜ', 'ㅝ', 'ㅞ', 'ㅟ', 'ㅠ', 'ㅡ', 'ㅢ', 'ㅣ'
++    };
++
++    private int mInitial = -1;
++    private int mMedial = -1;
++    private int mFinal;
++
++    boolean hasComposing() {
++        return mInitial >= 0 || mMedial >= 0;
++    }
++
++    void reset() {
++        mInitial = -1;
++        mMedial = -1;
++        mFinal = 0;
++    }
++
++    String getComposing() {
++        if (mInitial >= 0 && mMedial >= 0) {
++            return String.valueOf((char) (0xAC00 + ((mInitial * 21 + mMedial) * 28) + mFinal));
++        }
++        if (mInitial >= 0) {
++            return String.valueOf(INITIAL_JAMO[mInitial]);
++        }
++        if (mMedial >= 0) {
++            return String.valueOf(MEDIAL_JAMO[mMedial]);
++        }
++        return "";
++    }
++
++    Result input(final int compatibilityJamo) {
++        final int initial = indexOf(INITIAL_JAMO, compatibilityJamo);
++        if (initial >= 0) {
++            return inputConsonant(initial);
++        }
++        final int medial = indexOf(MEDIAL_JAMO, compatibilityJamo);
++        if (medial >= 0) {
++            return inputVowel(medial);
++        }
++        return new Result("", getComposing());
++    }
++
++    String backspace() {
++        if (mFinal != 0) {
++            final int firstFinal = firstFinalOfCompound(mFinal);
++            mFinal = firstFinal != 0 ? firstFinal : 0;
++        } else if (mMedial >= 0) {
++            final int firstMedial = firstMedialOfCompound(mMedial);
++            mMedial = firstMedial >= 0 ? firstMedial : -1;
++        } else {
++            mInitial = -1;
++        }
++        return getComposing();
++    }
++
++    private Result inputConsonant(final int nextInitial) {
++        String committed = "";
++        if (!hasComposing()) {
++            mInitial = nextInitial;
++        } else if (mInitial >= 0 && mMedial < 0) {
++            committed = getComposing();
++            mInitial = nextInitial;
++        } else if (mInitial < 0) {
++            committed = getComposing();
++            mMedial = -1;
++            mInitial = nextInitial;
++        } else if (mFinal == 0) {
++            final int nextFinal = initialToFinal(nextInitial);
++            if (nextFinal != 0) {
++                mFinal = nextFinal;
++            } else {
++                committed = getComposing();
++                mInitial = nextInitial;
++                mMedial = -1;
++            }
++        } else {
++            final int compoundFinal = combineFinal(mFinal, nextInitial);
++            if (compoundFinal != 0) {
++                mFinal = compoundFinal;
++            } else {
++                committed = getComposing();
++                mInitial = nextInitial;
++                mMedial = -1;
++                mFinal = 0;
++            }
++        }
++        return new Result(committed, getComposing());
++    }
++
++    private Result inputVowel(final int nextMedial) {
++        String committed = "";
++        if (!hasComposing()) {
++            mMedial = nextMedial;
++        } else if (mInitial < 0) {
++            final int compoundMedial = combineMedial(mMedial, nextMedial);
++            if (compoundMedial >= 0) {
++                mMedial = compoundMedial;
++            } else {
++                committed = getComposing();
++                mMedial = nextMedial;
++            }
++        } else if (mMedial < 0) {
++            mMedial = nextMedial;
++        } else if (mFinal == 0) {
++            final int compoundMedial = combineMedial(mMedial, nextMedial);
++            if (compoundMedial >= 0) {
++                mMedial = compoundMedial;
++            } else {
++                committed = getComposing();
++                mInitial = -1;
++                mMedial = nextMedial;
++            }
++        } else {
++            final int oldInitial = mInitial;
++            final int oldMedial = mMedial;
++            final int firstFinal = firstFinalOfCompound(mFinal);
++            final int movedInitial;
++            if (firstFinal != 0) {
++                movedInitial = secondInitialOfCompound(mFinal);
++                committed = compose(oldInitial, oldMedial, firstFinal);
++            } else {
++                movedInitial = finalToInitial(mFinal);
++                committed = compose(oldInitial, oldMedial, 0);
++            }
++            mInitial = movedInitial;
++            mMedial = nextMedial;
++            mFinal = 0;
++        }
++        return new Result(committed, getComposing());
++    }
++
++    static int mapTwoSetKey(final int codePoint, final boolean shifted) {
++        final char key = Character.toLowerCase((char) codePoint);
++        final boolean useShift = shifted || Character.isUpperCase((char) codePoint);
++        switch (key) {
++            case 'q': return useShift ? 'ㅃ' : 'ㅂ';
++            case 'w': return useShift ? 'ㅉ' : 'ㅈ';
++            case 'e': return useShift ? 'ㄸ' : 'ㄷ';
++            case 'r': return useShift ? 'ㄲ' : 'ㄱ';
++            case 't': return useShift ? 'ㅆ' : 'ㅅ';
++            case 'y': return 'ㅛ';
++            case 'u': return 'ㅕ';
++            case 'i': return 'ㅑ';
++            case 'o': return useShift ? 'ㅒ' : 'ㅐ';
++            case 'p': return useShift ? 'ㅖ' : 'ㅔ';
++            case 'a': return 'ㅁ';
++            case 's': return 'ㄴ';
++            case 'd': return 'ㅇ';
++            case 'f': return 'ㄹ';
++            case 'g': return 'ㅎ';
++            case 'h': return 'ㅗ';
++            case 'j': return 'ㅓ';
++            case 'k': return 'ㅏ';
++            case 'l': return 'ㅣ';
++            case 'z': return 'ㅋ';
++            case 'x': return 'ㅌ';
++            case 'c': return 'ㅊ';
++            case 'v': return 'ㅍ';
++            case 'b': return 'ㅠ';
++            case 'n': return 'ㅜ';
++            case 'm': return 'ㅡ';
++            default: return 0;
++        }
++    }
++
++    private static String compose(final int initial, final int medial, final int finalIndex) {
++        return String.valueOf((char) (0xAC00 + ((initial * 21 + medial) * 28) + finalIndex));
++    }
++
++    private static int indexOf(final char[] values, final int value) {
++        for (int i = 0; i < values.length; i++) {
++            if (values[i] == value) return i;
++        }
++        return -1;
++    }
++
++    private static int combineMedial(final int first, final int second) {
++        if (first == 8 && second == 0) return 9;   // ㅗ + ㅏ = ㅘ
++        if (first == 8 && second == 1) return 10;  // ㅗ + ㅐ = ㅙ
++        if (first == 8 && second == 20) return 11; // ㅗ + ㅣ = ㅚ
++        if (first == 13 && second == 4) return 14; // ㅜ + ㅓ = ㅝ
++        if (first == 13 && second == 5) return 15; // ㅜ + ㅔ = ㅞ
++        if (first == 13 && second == 20) return 16;// ㅜ + ㅣ = ㅟ
++        if (first == 18 && second == 20) return 19;// ㅡ + ㅣ = ㅢ
++        return -1;
++    }
++
++    private static int firstMedialOfCompound(final int medial) {
++        switch (medial) {
++            case 9: case 10: case 11: return 8;
++            case 14: case 15: case 16: return 13;
++            case 19: return 18;
++            default: return -1;
++        }
++    }
++
++    private static int initialToFinal(final int initial) {
++        switch (initial) {
++            case 0: return 1;   // ㄱ
++            case 1: return 2;   // ㄲ
++            case 2: return 4;   // ㄴ
++            case 3: return 7;   // ㄷ
++            case 5: return 8;   // ㄹ
++            case 6: return 16;  // ㅁ
++            case 7: return 17;  // ㅂ
++            case 9: return 19;  // ㅅ
++            case 10: return 20; // ㅆ
++            case 11: return 21; // ㅇ
++            case 12: return 22; // ㅈ
++            case 14: return 23; // ㅊ
++            case 15: return 24; // ㅋ
++            case 16: return 25; // ㅌ
++            case 17: return 26; // ㅍ
++            case 18: return 27; // ㅎ
++            default: return 0;
++        }
++    }
++
++    private static int finalToInitial(final int finalIndex) {
++        switch (finalIndex) {
++            case 1: return 0;
++            case 2: return 1;
++            case 4: return 2;
++            case 7: return 3;
++            case 8: return 5;
++            case 16: return 6;
++            case 17: return 7;
++            case 19: return 9;
++            case 20: return 10;
++            case 21: return 11;
++            case 22: return 12;
++            case 23: return 14;
++            case 24: return 15;
++            case 25: return 16;
++            case 26: return 17;
++            case 27: return 18;
++            default: return -1;
++        }
++    }
++
++    private static int combineFinal(final int firstFinal, final int secondInitial) {
++        if (firstFinal == 1 && secondInitial == 9) return 3;   // ㄳ
++        if (firstFinal == 4 && secondInitial == 12) return 5;  // ㄵ
++        if (firstFinal == 4 && secondInitial == 18) return 6;  // ㄶ
++        if (firstFinal == 8 && secondInitial == 0) return 9;   // ㄺ
++        if (firstFinal == 8 && secondInitial == 6) return 10;  // ㄻ
++        if (firstFinal == 8 && secondInitial == 7) return 11;  // ㄼ
++        if (firstFinal == 8 && secondInitial == 9) return 12;  // ㄽ
++        if (firstFinal == 8 && secondInitial == 16) return 13; // ㄾ
++        if (firstFinal == 8 && secondInitial == 17) return 14; // ㄿ
++        if (firstFinal == 8 && secondInitial == 18) return 15; // ㅀ
++        if (firstFinal == 17 && secondInitial == 9) return 18; // ㅄ
++        return 0;
++    }
++
++    private static int firstFinalOfCompound(final int finalIndex) {
++        switch (finalIndex) {
++            case 3: return 1;
++            case 5: case 6: return 4;
++            case 9: case 10: case 11: case 12: case 13: case 14: case 15: return 8;
++            case 18: return 17;
++            default: return 0;
++        }
++    }
++
++    private static int secondInitialOfCompound(final int finalIndex) {
++        switch (finalIndex) {
++            case 3: case 12: case 18: return 9;
++            case 5: return 12;
++            case 6: case 15: return 18;
++            case 9: return 0;
++            case 10: return 6;
++            case 11: return 7;
++            case 13: return 16;
++            case 14: return 17;
++            default: return -1;
++        }
++    }
++}
+diff --git a/java/lite/src/com/android/inputmethod/latin/LatinIME.java b/java/lite/src/com/android/inputmethod/latin/LatinIME.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..31f6f2740fbeab729ae107d171cb540770052bf5
+--- /dev/null
++++ b/java/lite/src/com/android/inputmethod/latin/LatinIME.java
+@@ -0,0 +1,427 @@
++/*
++ * Copyright (C) 2026
++ * SPDX-License-Identifier: Apache-2.0
++ */
++package com.android.inputmethod.latin;
++
++import android.inputmethodservice.InputMethodService;
++import android.inputmethodservice.Keyboard;
++import android.inputmethodservice.KeyboardView;
++import android.os.SystemClock;
++import android.text.InputType;
++import android.view.KeyEvent;
++import android.view.LayoutInflater;
++import android.view.View;
++import android.view.inputmethod.EditorInfo;
++import android.view.inputmethod.ExtractedText;
++import android.view.inputmethod.ExtractedTextRequest;
++import android.view.inputmethod.InputConnection;
++
++import java.util.List;
++
++/**
++ * Small, dependency-free Korean/English IME for an e-ink reader.
++ *
++ * <p>It intentionally has no dictionary, suggestions, gesture typing, emoji, telemetry,
++ * network access, settings UI, or native library.</p>
++ */
++public final class LatinIME extends InputMethodService
++        implements KeyboardView.OnKeyboardActionListener {
++    private static final int KEYCODE_LANGUAGE = -6;
++    private static final int KEYCODE_CURSOR_LEFT = -5335;
++    private static final int KEYCODE_HIDE = -5337;
++    private static final int KEYCODE_CURSOR_RIGHT = -5336;
++    private static final int KEYCODE_DOT_COM = -5338;
++    private static final int KEYCODE_DOT_NET = -5339;
++    private static final long CAPS_LOCK_INTERVAL_MILLIS = 800;
++
++    private final KoreanAutomata mKoreanAutomata = new KoreanAutomata();
++
++    private KeyboardView mKeyboardView;
++    private Keyboard mKoreanKeyboard;
++    private Keyboard mQwertyKeyboard;
++    private Keyboard mQwertyOnlyKeyboard;
++    private Keyboard mEmailKeyboard;
++    private Keyboard mSymbolsKeyboard;
++    private Keyboard mSymbolsShiftKeyboard;
++    private Keyboard mForcedAlphabetKeyboard;
++    private EditorInfo mEditorInfo;
++
++    private boolean mKoreanMode = true;
++    private boolean mNoKorean;
++    private boolean mSymbolsMode;
++    private boolean mSymbolsShifted;
++    private boolean mShifted;
++    private boolean mCapsLock;
++    private long mLastShiftTime;
++    private int mSelectionStart = -1;
++    private int mSelectionEnd = -1;
++
++    @Override
++    public View onCreateInputView() {
++        ensureKeyboards();
++        mKeyboardView = (KeyboardView) LayoutInflater.from(this).inflate(R.layout.input, null);
++        mKeyboardView.setOnKeyboardActionListener(this);
++        mKeyboardView.setPreviewEnabled(false);
++        showKeyboard();
++        return mKeyboardView;
++    }
++
++    @Override
++    public void onStartInput(final EditorInfo attribute, final boolean restarting) {
++        super.onStartInput(attribute, restarting);
++        ensureKeyboards();
++        mEditorInfo = attribute;
++        mKoreanAutomata.reset();
++        mShifted = false;
++        mCapsLock = false;
++        mSymbolsShifted = false;
++        mLastShiftTime = 0;
++        mSelectionStart = attribute != null ? attribute.initialSelStart : -1;
++        mSelectionEnd = attribute != null ? attribute.initialSelEnd : -1;
++
++        final int inputType = attribute != null ? attribute.inputType : InputType.TYPE_CLASS_TEXT;
++        final int inputClass = inputType & InputType.TYPE_MASK_CLASS;
++        final int variation = inputType & InputType.TYPE_MASK_VARIATION;
++        mNoKorean = inputClass != InputType.TYPE_CLASS_TEXT || isAsciiOnlyVariation(variation);
++        mSymbolsMode = inputClass == InputType.TYPE_CLASS_NUMBER
++                || inputClass == InputType.TYPE_CLASS_PHONE
++                || inputClass == InputType.TYPE_CLASS_DATETIME;
++        mKoreanMode = !mNoKorean;
++
++        if (isEmailVariation(variation)) {
++            mForcedAlphabetKeyboard = mEmailKeyboard;
++        } else if (mNoKorean) {
++            mForcedAlphabetKeyboard = mQwertyOnlyKeyboard;
++        } else {
++            mForcedAlphabetKeyboard = null;
++        }
++        showKeyboard();
++    }
++
++    @Override
++    public void onStartInputView(final EditorInfo info, final boolean restarting) {
++        super.onStartInputView(info, restarting);
++        showKeyboard();
++    }
++
++    @Override
++    public void onFinishInput() {
++        finishKoreanComposition();
++        mKoreanAutomata.reset();
++        super.onFinishInput();
++    }
++
++    @Override
++    public void onUpdateSelection(final int oldSelStart, final int oldSelEnd,
++            final int newSelStart, final int newSelEnd, final int candidatesStart,
++            final int candidatesEnd) {
++        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd,
++                candidatesStart, candidatesEnd);
++        mSelectionStart = newSelStart;
++        mSelectionEnd = newSelEnd;
++        if (mKoreanAutomata.hasComposing()
++                && (newSelStart != candidatesEnd || newSelEnd != candidatesEnd)) {
++            final InputConnection connection = getCurrentInputConnection();
++            if (connection != null) connection.finishComposingText();
++            mKoreanAutomata.reset();
++        }
++    }
++
++    @Override
++    public boolean onEvaluateFullscreenMode() {
++        return false;
++    }
++
++    @Override
++    public void onKey(final int primaryCode, final int[] keyCodes) {
++        switch (primaryCode) {
++            case Keyboard.KEYCODE_DELETE:
++                handleBackspace();
++                return;
++            case Keyboard.KEYCODE_SHIFT:
++                handleShift();
++                return;
++            case Keyboard.KEYCODE_MODE_CHANGE:
++                finishKoreanComposition();
++                mSymbolsMode = !mSymbolsMode;
++                mSymbolsShifted = false;
++                mShifted = false;
++                showKeyboard();
++                return;
++            case KEYCODE_LANGUAGE:
++                if (!mNoKorean) {
++                    finishKoreanComposition();
++                    mKoreanMode = !mKoreanMode;
++                    clearShift();
++                    showKeyboard();
++                }
++                return;
++            case KEYCODE_CURSOR_LEFT:
++                moveCursor(-1);
++                return;
++            case KEYCODE_CURSOR_RIGHT:
++                moveCursor(1);
++                return;
++            case KEYCODE_HIDE:
++                finishKoreanComposition();
++                requestHideSelf(0);
++                return;
++            case KEYCODE_DOT_COM:
++                commitText(".com");
++                return;
++            case KEYCODE_DOT_NET:
++                commitText(".net");
++                return;
++            case '\n':
++                handleEnter();
++                return;
++            default:
++                handleCharacter(primaryCode);
++        }
++    }
++
++    private void handleCharacter(final int codePoint) {
++        final InputConnection connection = getCurrentInputConnection();
++        if (connection == null || codePoint <= 0) return;
++
++        if (!mSymbolsMode && mKoreanMode && !mNoKorean) {
++            final int jamo = KoreanAutomata.mapTwoSetKey(codePoint, isShiftActive());
++            if (jamo != 0) {
++                final KoreanAutomata.Result result = mKoreanAutomata.input(jamo);
++                if (!result.committed.isEmpty()) {
++                    connection.commitText(result.committed, 1);
++                }
++                connection.setComposingText(result.composing, 1);
++                consumeOneShotShift();
++                return;
++            }
++        }
++
++        finishKoreanComposition();
++        int outputCodePoint = codePoint;
++        if (!mSymbolsMode && !mKoreanMode && Character.isLetter(codePoint)
++                && isShiftActive()) {
++            outputCodePoint = Character.toUpperCase(codePoint);
++        }
++        connection.commitText(new String(Character.toChars(outputCodePoint)), 1);
++        consumeOneShotShift();
++    }
++
++    private void handleBackspace() {
++        final InputConnection connection = getCurrentInputConnection();
++        if (connection == null) return;
++        if (mKoreanAutomata.hasComposing()) {
++            final String composing = mKoreanAutomata.backspace();
++            connection.setComposingText(composing, 1);
++            if (composing.isEmpty()) connection.finishComposingText();
++            return;
++        }
++
++        final ExtractedText extracted = getExtractedText(connection);
++        if (extracted != null && extracted.selectionStart != extracted.selectionEnd) {
++            connection.commitText("", 1);
++            return;
++        }
++        if (!connection.deleteSurroundingTextInCodePoints(1, 0)) {
++            sendDownUpKeyEvent(connection, KeyEvent.KEYCODE_DEL);
++        }
++    }
++
++    private void handleShift() {
++        if (mSymbolsMode) {
++            mSymbolsShifted = !mSymbolsShifted;
++            showKeyboard();
++            return;
++        }
++        final long now = SystemClock.uptimeMillis();
++        if (mLastShiftTime != 0 && now - mLastShiftTime <= CAPS_LOCK_INTERVAL_MILLIS) {
++            mCapsLock = !mCapsLock;
++            mShifted = mCapsLock;
++            mLastShiftTime = 0;
++        } else {
++            mShifted = !mShifted;
++            if (!mShifted) mCapsLock = false;
++            mLastShiftTime = now;
++        }
++        updateAlphabetLabels();
++    }
++
++    private void handleEnter() {
++        finishKoreanComposition();
++        final InputConnection connection = getCurrentInputConnection();
++        if (connection == null) return;
++        final int imeOptions = mEditorInfo != null ? mEditorInfo.imeOptions : EditorInfo.IME_ACTION_NONE;
++        final int action = imeOptions & EditorInfo.IME_MASK_ACTION;
++        final boolean hasAction = action != EditorInfo.IME_ACTION_NONE
++                && action != EditorInfo.IME_ACTION_UNSPECIFIED
++                && (imeOptions & EditorInfo.IME_FLAG_NO_ENTER_ACTION) == 0;
++        if (hasAction) {
++            connection.performEditorAction(action);
++        } else {
++            connection.commitText("\n", 1);
++        }
++    }
++
++    private void moveCursor(final int direction) {
++        finishKoreanComposition();
++        final InputConnection connection = getCurrentInputConnection();
++        if (connection == null) return;
++        final ExtractedText extracted = getExtractedText(connection);
++        int start = mSelectionStart;
++        int end = mSelectionEnd;
++        if (extracted != null) {
++            start = extracted.startOffset + extracted.selectionStart;
++            end = extracted.startOffset + extracted.selectionEnd;
++        }
++        if (start < 0 || end < 0) return;
++
++        final int target;
++        if (start != end) {
++            target = direction < 0 ? Math.min(start, end) : Math.max(start, end);
++        } else if (extracted != null && extracted.text != null) {
++            final int relative = start - extracted.startOffset;
++            final int moved = moveOneCodePoint(extracted.text, relative, direction);
++            target = extracted.startOffset + moved;
++        } else {
++            target = Math.max(0, start + direction);
++        }
++        if (connection.setSelection(target, target)) {
++            mSelectionStart = target;
++            mSelectionEnd = target;
++        }
++    }
++
++    private static int moveOneCodePoint(final CharSequence text, final int offset,
++            final int direction) {
++        final int safeOffset = Math.max(0, Math.min(offset, text.length()));
++        if (direction < 0) {
++            if (safeOffset == 0) return 0;
++            return Character.offsetByCodePoints(text, safeOffset, -1);
++        }
++        if (safeOffset == text.length()) return text.length();
++        return Character.offsetByCodePoints(text, safeOffset, 1);
++    }
++
++    private void commitText(final String text) {
++        finishKoreanComposition();
++        final InputConnection connection = getCurrentInputConnection();
++        if (connection != null) connection.commitText(text, 1);
++        consumeOneShotShift();
++    }
++
++    private void finishKoreanComposition() {
++        if (!mKoreanAutomata.hasComposing()) return;
++        final InputConnection connection = getCurrentInputConnection();
++        if (connection != null) connection.finishComposingText();
++        mKoreanAutomata.reset();
++    }
++
++    private void consumeOneShotShift() {
++        if (mShifted && !mCapsLock) {
++            mShifted = false;
++            updateAlphabetLabels();
++        }
++    }
++
++    private void clearShift() {
++        mShifted = false;
++        mCapsLock = false;
++        mLastShiftTime = 0;
++    }
++
++    private boolean isShiftActive() {
++        return mShifted || mCapsLock;
++    }
++
++    private void ensureKeyboards() {
++        if (mKoreanKeyboard != null) return;
++        mKoreanKeyboard = new Keyboard(this, R.xml.korean);
++        mQwertyKeyboard = new Keyboard(this, R.xml.qwerty);
++        mQwertyOnlyKeyboard = new Keyboard(this, R.xml.qwerty_only);
++        mEmailKeyboard = new Keyboard(this, R.xml.email);
++        mSymbolsKeyboard = new Keyboard(this, R.xml.symbols);
++        mSymbolsShiftKeyboard = new Keyboard(this, R.xml.symbols_shift);
++        updateLabels(mKoreanKeyboard, true, false);
++        updateLabels(mQwertyKeyboard, false, false);
++    }
++
++    private void showKeyboard() {
++        if (mKeyboardView == null) return;
++        ensureKeyboards();
++        final Keyboard keyboard;
++        if (mSymbolsMode) {
++            keyboard = mSymbolsShifted ? mSymbolsShiftKeyboard : mSymbolsKeyboard;
++        } else if (mForcedAlphabetKeyboard != null) {
++            keyboard = mForcedAlphabetKeyboard;
++        } else {
++            keyboard = mKoreanMode ? mKoreanKeyboard : mQwertyKeyboard;
++        }
++        mKeyboardView.setKeyboard(keyboard);
++        updateAlphabetLabels();
++    }
++
++    private void updateAlphabetLabels() {
++        if (mKoreanKeyboard == null) return;
++        updateLabels(mKoreanKeyboard, true, isShiftActive());
++        updateLabels(mQwertyKeyboard, false, isShiftActive());
++        updateLabels(mQwertyOnlyKeyboard, false, isShiftActive());
++        updateLabels(mEmailKeyboard, false, isShiftActive());
++        if (mKeyboardView != null && !mSymbolsMode) {
++            mKeyboardView.setShifted(isShiftActive());
++            mKeyboardView.invalidateAllKeys();
++        }
++    }
++
++    private static void updateLabels(final Keyboard keyboard, final boolean korean,
++            final boolean shifted) {
++        final List<Keyboard.Key> keys = keyboard.getKeys();
++        for (final Keyboard.Key key : keys) {
++            if (key.codes == null || key.codes.length == 0) continue;
++            final int code = key.codes[0];
++            if (code < 'a' || code > 'z') continue;
++            if (korean) {
++                final int jamo = KoreanAutomata.mapTwoSetKey(code, shifted);
++                key.label = jamo == 0 ? null : String.valueOf((char) jamo);
++            } else {
++                key.label = String.valueOf((char) (shifted ? Character.toUpperCase(code) : code));
++            }
++        }
++    }
++
++    private static boolean isEmailVariation(final int variation) {
++        return variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
++                || variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS;
++    }
++
++    private static boolean isAsciiOnlyVariation(final int variation) {
++        return isEmailVariation(variation)
++                || variation == InputType.TYPE_TEXT_VARIATION_URI
++                || variation == InputType.TYPE_TEXT_VARIATION_PASSWORD
++                || variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
++                || variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD;
++    }
++
++    private static ExtractedText getExtractedText(final InputConnection connection) {
++        final ExtractedTextRequest request = new ExtractedTextRequest();
++        request.hintMaxChars = 4096;
++        request.hintMaxLines = 32;
++        return connection.getExtractedText(request, 0);
++    }
++
++    private static void sendDownUpKeyEvent(final InputConnection connection, final int keyCode) {
++        final long now = SystemClock.uptimeMillis();
++        connection.sendKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0));
++        connection.sendKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0));
++    }
++
++    @Override public void onText(final CharSequence text) {
++        if (text != null) commitText(text.toString());
++    }
++    @Override public void onPress(final int primaryCode) { }
++    @Override public void onRelease(final int primaryCode) { }
++    @Override public void swipeLeft() { moveCursor(-1); }
++    @Override public void swipeRight() { moveCursor(1); }
++    @Override public void swipeDown() { requestHideSelf(0); }
++    @Override public void swipeUp() { }
++}
+diff --git a/java/res/drawable/ridi_eink_key_background.xml b/java/res/drawable/ridi_eink_key_background.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..1924f0c9f5911d4043bbe56f09eb1d000e3cde28
+--- /dev/null
++++ b/java/res/drawable/ridi_eink_key_background.xml
+@@ -0,0 +1,9 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- No gradient, shadow, corner antialiasing, or translucent press state. -->
++<selector xmlns:android="http://schemas.android.com/apk/res/android">
++    <item>
++        <shape android:shape="rectangle">
++            <solid android:color="#ffffffff" />
++        </shape>
++    </item>
++</selector>
+diff --git a/java/res/drawable/ridi_eink_keyboard_background.xml b/java/res/drawable/ridi_eink_keyboard_background.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..b24d7138679ba7882e5e31508ceac03e74c08ada
+--- /dev/null
++++ b/java/res/drawable/ridi_eink_keyboard_background.xml
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Pure black gaps form straight, high-contrast key separators. -->
++<shape xmlns:android="http://schemas.android.com/apk/res/android"
++    android:shape="rectangle">
++    <solid android:color="#ff000000" />
++</shape>
+diff --git a/java/res/values/themes-lxx-light.xml b/java/res/values/themes-lxx-light.xml
+index eecd191a342584664653c4438f5121dbd1e7db46..21918568d9f68e3cf2c11312662a5e9442afe78a 100644
+--- a/java/res/values/themes-lxx-light.xml
++++ b/java/res/values/themes-lxx-light.xml
+@@ -42,10 +42,10 @@
+         name="KeyboardView.LXX_Light"
+         parent="KeyboardView.LXX"
+     >
+-        <item name="android:background">@drawable/keyboard_background_lxx_light</item>
+-        <item name="keyBackground">@drawable/btn_keyboard_key_lxx_light</item>
+-        <item name="functionalKeyBackground">@drawable/btn_keyboard_key_functional_lxx_light</item>
+-        <item name="spacebarBackground">@drawable/btn_keyboard_spacebar_lxx_light</item>
++        <item name="android:background">@drawable/ridi_eink_keyboard_background</item>
++        <item name="keyBackground">@drawable/ridi_eink_key_background</item>
++        <item name="functionalKeyBackground">@drawable/ridi_eink_key_background</item>
++        <item name="spacebarBackground">@drawable/ridi_eink_key_background</item>
+         <item name="keyTextColor">@color/key_text_color_lxx_light</item>
+         <item name="keyTextInactivatedColor">@color/key_text_inactive_color_lxx_light</item>
+         <item name="functionalTextColor">@color/key_functional_text_color_lxx_light</item>
+@@ -138,8 +138,8 @@
+         <item name="centerSuggestionPercentile">@fraction/config_center_suggestion_percentile</item>
+         <item name="maxMoreSuggestionsRow">@integer/config_max_more_suggestions_row</item>
+         <item name="minMoreSuggestionsWidth">@fraction/config_min_more_suggestions_width</item>
+-        <item name="android:background">@drawable/keyboard_suggest_strip_lxx_light</item>
+-        <item name="android:src">@drawable/suggestions_strip_divider_lxx_light</item>
++        <item name="android:background">@android:color/white</item>
++        <item name="android:src">@null</item>
+         <item name="suggestionStripOptions">autoCorrectBold|validTypedWordBold</item>
+         <item name="colorValidTypedWord">@color/typed_word_color_lxx_light</item>
+         <item name="colorTypedWord">@color/typed_word_color_lxx_light</item>

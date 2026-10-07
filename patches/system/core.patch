@@ -1,0 +1,44 @@
+diff --git a/libpixelflinger/scanline.cpp b/libpixelflinger/scanline.cpp
+index c6cf5bffe82c283c17f000234a706ad5abd398cb..c83ae187b821d400ed2cdc4abc4f0ddd764047eb 100644
+--- a/libpixelflinger/scanline.cpp
++++ b/libpixelflinger/scanline.cpp
+@@ -18,6 +18,7 @@
+ #define LOG_TAG "pixelflinger"
+ 
+ #include <assert.h>
++#include <stdint.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -2371,4 +2372,3 @@ void rect_memcpy(context_t* c, size_t yc)
+ }
+ // ----------------------------------------------------------------------------
+ }; // namespace android
+-
+diff --git a/libpixelflinger/trap.cpp b/libpixelflinger/trap.cpp
+index 234bfdde103563c405c6840b306dec1af3244d4a..abebcaadf603046ffecfee813dd193e1e1d6e3f1 100644
+--- a/libpixelflinger/trap.cpp
++++ b/libpixelflinger/trap.cpp
+@@ -740,8 +740,9 @@ triangle_sweep_edges( Edge*  left,
+     left->x  += left_xi * count;
+     right->x += right_xi * count;
+ 
+-	const int xmin = c->state.scissor.left;
+-	const int xmax = c->state.scissor.right;
++    const int xmin = max(int(c->state.scissor.left), 0);
++    const int xmax = min(int(c->state.scissor.right),
++                         int(c->state.buffers.color.width));
+     do {
+         // horizontal scissoring
+         const int32_t xl = max(left_x  >> TRI_ITERATORS_BITS, xmin);
+@@ -749,7 +750,9 @@ triangle_sweep_edges( Edge*  left,
+         left_x  += left_xi;
+         right_x += right_xi;
+         // invoke the scanline rasterizer
+-        if (ggl_likely(xl < xr)) {
++        const int32_t y = c->iterators.y;
++        if (ggl_likely(xl < xr && y >= 0 &&
++                       uint32_t(y) < c->state.buffers.color.height)) {
+             c->iterators.xl = xl;
+             c->iterators.xr = xr;
+             c->scanline(c);

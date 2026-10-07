@@ -1,0 +1,337 @@
+diff --git a/hwcomposer/hwcomposer.cpp b/hwcomposer/hwcomposer.cpp
+index 61a3c464503cc4c144b19ec7c9476df5fc1d4c86..4da16f4a9d40ae7667a4ebd2e2507fb777635ec4 100644
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -14,12 +14,16 @@
+  * limitations under the License.
+  */
+ #include <pthread.h>
++#include <stdint.h>
+ #include <stdlib.h>
++#include <string.h>
+ #include <sys/time.h>
+ #include <sys/resource.h>
+ 
+ #include <cutils/log.h>
++#include <cutils/properties.h>
+ #include <hardware/hwcomposer.h>
++#include <log/log.h>
+ #include <sync/sync.h>
+ 
+ struct ranchu_hwc_composer_device_1 {
+@@ -33,6 +37,97 @@ struct ranchu_hwc_composer_device_1 {
+     bool vsync_callback_enabled; // protected by this->vsync_lock
+ };
+ 
++static const char* paper_waveform_name(int32_t mode) {
++    switch (mode & 0x0f) {
++        case 0: return "INIT";
++        case 1: return "DU";
++        case 2: return "GC16";
++        case 3: return "GC4";
++        case 4: return "ANIM";
++        case 5: return "A2/AUTO";
++        case 6: return "GL16";
++        case 7: return "GLR16";
++        case 8: return "GLD16";
++        default: return "UNKNOWN";
++    }
++}
++
++/* Mirror the PAPER PRO periodic cleanup policy for emulator log validation. */
++static void paper_apply_periodic_refresh(hwc_layer_1_t* layer) {
++    int32_t mode = -1;
++    memcpy(&mode, layer->reserved, sizeof(mode));
++    if (mode == -1) return;
++
++    char value[PROPERTY_VALUE_MAX];
++    property_get("persist.sys.ridi.epd.full_refresh_interval", value, "10");
++    const int requested_interval = atoi(value);
++    const int interval = requested_interval == 0 || requested_interval == 1 ||
++            requested_interval == 3 || requested_interval == 5 ||
++            requested_interval == 10 || requested_interval == 20
++            ? requested_interval : 10;
++
++    static unsigned int partial_updates = 0;
++    static unsigned int force_serial_seen = 0;
++    property_get("sys.ridi.epd.full_refresh_seq", value, "0");
++    const unsigned int force_serial = (unsigned int)strtoul(value, NULL, 10);
++    const bool forced = force_serial != 0 && force_serial != force_serial_seen;
++    if (forced) force_serial_seen = force_serial;
++
++    const bool already_full = (mode & 0x20) != 0;
++    const bool periodic = interval > 0 && partial_updates + 1 >=
++            (unsigned int)interval;
++    if (forced || periodic) {
++        mode = (mode & ~0x0f) | 0x02; // GC16
++        mode |= 0x20;                // FULL
++        memcpy(layer->reserved, &mode, sizeof(mode));
++        partial_updates = 0;
++    } else if (already_full) {
++        partial_updates = 0;
++    } else {
++        partial_updates++;
++    }
++}
++
++static void paper_log_epdc_update(uint64_t frame, size_t layer,
++                                  const hwc_layer_1_t* hwcLayer) {
++    int32_t mode = -1;
++    static_assert(sizeof(hwcLayer->reserved) >= sizeof(mode),
++                  "hwc_layer_1_t reserved area is too small for E Ink policy");
++    memcpy(&mode, hwcLayer->reserved, sizeof(mode));
++    if (mode == -1) return;
++
++    const hwc_region_t& damage = hwcLayer->surfaceDamage;
++    if (damage.numRects == 0 || damage.rects == NULL) {
++        __android_log_print(ANDROID_LOG_INFO, "PAPER_EPDC",
++              "frame=%llu layer=%zu mode=0x%08x wave=%s "
++              "update=%s wait=%s source=%s damage=FULL_OR_UNKNOWN",
++              (unsigned long long)frame, layer, (unsigned int)mode,
++              paper_waveform_name(mode), (mode & 0x20) ? "FULL" : "PARTIAL",
++              (mode & 0x40) ? "WAIT" : "NOWAIT",
++              (mode & 0x10000000) ? "SYSTEM" : "APP");
++        return;
++    }
++
++    int left = damage.rects[0].left;
++    int top = damage.rects[0].top;
++    int right = damage.rects[0].right;
++    int bottom = damage.rects[0].bottom;
++    for (size_t i = 1; i < damage.numRects; ++i) {
++        if (damage.rects[i].left < left) left = damage.rects[i].left;
++        if (damage.rects[i].top < top) top = damage.rects[i].top;
++        if (damage.rects[i].right > right) right = damage.rects[i].right;
++        if (damage.rects[i].bottom > bottom) bottom = damage.rects[i].bottom;
++    }
++    __android_log_print(ANDROID_LOG_INFO, "PAPER_EPDC",
++          "frame=%llu layer=%zu mode=0x%08x wave=%s "
++          "update=%s wait=%s source=%s damage=%d,%d-%d,%d rects=%zu",
++          (unsigned long long)frame, layer, (unsigned int)mode,
++          paper_waveform_name(mode), (mode & 0x20) ? "FULL" : "PARTIAL",
++          (mode & 0x40) ? "WAIT" : "NOWAIT",
++          (mode & 0x10000000) ? "SYSTEM" : "APP",
++          left, top, right, bottom, damage.numRects);
++}
++
+ static int hwc_prepare(hwc_composer_device_1_t* dev __unused,
+                        size_t numDisplays, hwc_display_contents_1_t** displays) {
+ 
+@@ -62,13 +157,19 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
+ 
+     hwc_display_contents_1_t* contents = displays[HWC_DISPLAY_PRIMARY];
+ 
++    static uint64_t frame = 0;
++    const uint64_t currentFrame = ++frame;
+     int retireFenceFd = -1;
+     int err = 0;
+     for (size_t layer = 0; layer < contents->numHwLayers; layer++) {
+             hwc_layer_1_t* fb_layer = &contents->hwLayers[layer];
+ 
+-        int releaseFenceFd = -1;
+-        if (fb_layer->acquireFenceFd > 0) {
++        if (fb_layer->compositionType == HWC_FRAMEBUFFER_TARGET) {
++            paper_apply_periodic_refresh(fb_layer);
++        }
++        paper_log_epdc_update(currentFrame, layer, fb_layer);
++
++        if (fb_layer->acquireFenceFd >= 0) {
+             const int kAcquireWarningMS= 3000;
+             err = sync_wait(fb_layer->acquireFenceFd, kAcquireWarningMS);
+             if (err < 0 && errno == ETIME) {
+@@ -82,7 +183,6 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
+                       "HWC_FRAMEBUFFER_TARGET layer", layer);
+             }
+ 
+-            releaseFenceFd = dup(fb_layer->acquireFenceFd);
+             fb_layer->acquireFenceFd = -1;
+         }
+ 
+@@ -91,18 +191,11 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
+         }
+ 
+         pdev->fbdev->post(pdev->fbdev, fb_layer->handle);
+-        fb_layer->releaseFenceFd = releaseFenceFd;
+-
+-        if (releaseFenceFd > 0) {
+-            if (retireFenceFd == -1) {
+-                retireFenceFd = dup(releaseFenceFd);
+-            } else {
+-                int mergedFenceFd = sync_merge("hwc_set retireFence",
+-                                               releaseFenceFd, retireFenceFd);
+-                close(retireFenceFd);
+-                retireFenceFd = mergedFenceFd;
+-            }
+-        }
++        // This composer waits for the acquire fence and posts synchronously,
++        // so there is no outstanding work to represent with a release fence.
++        // The old code closed acquireFenceFd and then dup()ed that closed fd,
++        // producing an invalid fence and unreliable present timing.
++        fb_layer->releaseFenceFd = -1;
+     }
+ 
+     contents->retireFenceFd = retireFenceFd;
+@@ -147,12 +240,9 @@ static int hwc_event_control(struct hwc_composer_device_1* dev, int dpy __unused
+     return ret;
+ }
+ 
+-static int hwc_blank(struct hwc_composer_device_1* dev __unused, int disp,
+-                     int blank __unused) {
+-    if (disp != HWC_DISPLAY_PRIMARY) {
+-        return -EINVAL;
+-    }
+-    return 0;
++static int hwc_set_power_mode(struct hwc_composer_device_1* dev __unused,
++                              int disp, int mode __unused) {
++    return disp == HWC_DISPLAY_PRIMARY ? 0 : -EINVAL;
+ }
+ 
+ static void hwc_dump(hwc_composer_device_1* dev __unused, char* buff __unused,
+@@ -214,6 +304,16 @@ static int hwc_get_display_attributes(struct hwc_composer_device_1* dev __unused
+     return 0;
+ }
+ 
++static int hwc_get_active_config(struct hwc_composer_device_1* dev __unused,
++                                 int disp) {
++    return disp == HWC_DISPLAY_PRIMARY ? 0 : -EINVAL;
++}
++
++static int hwc_set_active_config(struct hwc_composer_device_1* dev __unused,
++                                 int disp, int index) {
++    return (disp == HWC_DISPLAY_PRIMARY && index == 0) ? 0 : -EINVAL;
++}
++
+ static int hwc_close(hw_device_t* dev) {
+     struct ranchu_hwc_composer_device_1* pdev = (struct ranchu_hwc_composer_device_1*)dev;
+     pthread_kill(pdev->vsync_thread, SIGTERM);
+@@ -297,21 +397,34 @@ static int hwc_open(const struct hw_module_t* module, const char* name,
+     }
+ 
+     pdev->base.common.tag = HARDWARE_DEVICE_TAG;
+-    pdev->base.common.version = HWC_DEVICE_API_VERSION_1_1;
++    // SurfaceFlinger only supplies per-layer surfaceDamage to HWC 1.5.  The
++    // paper emulator consumes that metadata for diagnostics while retaining
++    // the ordinary Goldfish framebuffer post path.
++    pdev->base.common.version = HWC_DEVICE_API_VERSION_1_5;
+     pdev->base.common.module = const_cast<hw_module_t *>(module);
+     pdev->base.common.close = hwc_close;
+ 
+     pdev->base.prepare = hwc_prepare;
+     pdev->base.set = hwc_set;
+     pdev->base.eventControl = hwc_event_control;
+-    pdev->base.blank = hwc_blank;
++    pdev->base.setPowerMode = hwc_set_power_mode;
+     pdev->base.query = hwc_query;
+     pdev->base.registerProcs = hwc_register_procs;
+     pdev->base.dump = hwc_dump;
+     pdev->base.getDisplayConfigs = hwc_get_display_configs;
+     pdev->base.getDisplayAttributes = hwc_get_display_attributes;
+-
+-    pdev->vsync_period_ns = 1000*1000*1000/60; // vsync is 60 hz
++    pdev->base.getActiveConfig = hwc_get_active_config;
++    pdev->base.setActiveConfig = hwc_set_active_config;
++
++    char vsync_hz_value[PROPERTY_VALUE_MAX];
++    property_get("ro.ridi.epd.vsync_hz", vsync_hz_value, "60");
++    long vsync_hz = strtol(vsync_hz_value, NULL, 10);
++    if (vsync_hz < 1 || vsync_hz > 60) {
++        vsync_hz = 60;
++    }
++    pdev->vsync_period_ns = 1000LL * 1000LL * 1000LL / vsync_hz;
++    ALOGI("Paper emulator vsync_hz=%ld period_ns=%d", vsync_hz,
++          pdev->vsync_period_ns);
+ 
+     hw_module_t const* hw_module;
+     ret = hw_get_module(GRALLOC_HARDWARE_MODULE_ID, &hw_module);
+diff --git a/init.ranchu-net.sh b/init.ranchu-net.sh
+index e4347d3b66c3cca82ea01d7b3c8a62a806f20d34..583604943349f0e7e0230d3ea6425cf2fdf2089f 100755
+--- a/init.ranchu-net.sh
++++ b/init.ranchu-net.sh
+@@ -2,7 +2,14 @@
+ 
+ # Setup networking when boot starts
+ ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up
+-route add default gw 10.0.2.2 dev eth0
++# Android O's emulator image includes toybox ip but not the legacy route
++# command.  Keep the historical Goldfish/Ranchu address contract while using
++# the command that is actually present in the guest.
++if [ -x /system/bin/ip ]; then
++    ip route replace default via 10.0.2.2 dev eth0
++else
++    route add default gw 10.0.2.2 dev eth0
++fi
+ 
+ 
+ # Setup additionnal DNS servers if needed
+@@ -29,4 +36,3 @@ case "$my_ip" in
+     *) ifconfig eth1 "$my_ip" netmask 255.255.255.0 up
+     ;;
+ esac
+-
+diff --git a/qemu-props/qemu-props.c b/qemu-props/qemu-props.c
+index c80863a54be9d8682310f9733b79efef743e5bab..fcd0e640715fb4a8668f929435172cb4583f5955 100644
+--- a/qemu-props/qemu-props.c
++++ b/qemu-props/qemu-props.c
+@@ -35,6 +35,7 @@
+ 
+ #include <cutils/properties.h>
+ #include <unistd.h>
++#include <string.h>
+ #include "qemud.h"
+ 
+ /* Name of the qemud service we want to connect to.
+@@ -46,6 +47,7 @@
+ int  main(void)
+ {
+     int  qemud_fd, count = 0;
++    char pending_opengles_version[PROPERTY_VALUE_MAX] = { 0 };
+ 
+     /* try to connect to the qemud service */
+     {
+@@ -101,6 +103,19 @@ int  main(void)
+         }
+         *q++ = '\0';
+ 
++        /*
++         * The legacy emulator frontend sends ro.opengles.version before it
++         * sends qemu.gles.  Keep that read-only property pending until the
++         * complete boot-property stream is available so the PAPER ARM
++         * no-GPU profile can publish the capability that the active
++         * libGLES_android backend actually provides.  Other emulator
++         * products retain the frontend value unchanged below.
++         */
++        if (!strcmp(temp, "ro.opengles.version")) {
++            strlcpy(pending_opengles_version, q, sizeof pending_opengles_version);
++            continue;
++        }
++
+         if (property_set(temp, q) < 0) {
+             DD("could not set property '%s' to '%s'", temp, q);
+         } else {
+@@ -108,6 +123,26 @@ int  main(void)
+         }
+     }
+ 
++    if (pending_opengles_version[0] != '\0') {
++        char qemu_gles[PROPERTY_VALUE_MAX];
++        char paper_profile[PROPERTY_VALUE_MAX];
++        property_get("qemu.gles", qemu_gles, "");
++        property_get("qemu.paper.profile", paper_profile, "");
++
++        const char* advertised_version = pending_opengles_version;
++        if (paper_profile[0] != '\0' && !strcmp(qemu_gles, "0") &&
++                !strcmp(pending_opengles_version, "131072")) {
++            advertised_version = "65536";
++        }
++
++        if (property_set("ro.opengles.version", advertised_version) < 0) {
++            DD("could not set property 'ro.opengles.version' to '%s'",
++                    advertised_version);
++        } else {
++            count += 1;
++        }
++    }
++
+ 
+     /* HACK start adbd periodically every minute, if adbd is already running, this is a no-op */
+     for(;;) {

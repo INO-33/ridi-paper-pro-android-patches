@@ -1,0 +1,54 @@
+diff --git a/core/Makefile b/core/Makefile
+index a650565a1688e18171f162ce241a2dd074963f71..14b70c83c58d3597e8f13c48068fd8893448f3fc 100644
+--- a/core/Makefile
++++ b/core/Makefile
+@@ -1373,7 +1373,7 @@ KERNEL_CROSS_TOOLCHAIN := `pwd`/prebuilts/gcc/linux-x86/arm/arm-linux-androideab
+ KERNEL_IMAGE_NAME    := $(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/zImage
+ endif
+ KERNEL_CFLAGS := KCFLAGS=-mno-android
+-KERNEL_ENV := ARCH=$(TARGET_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_TOOLCHAIN) LOADADDR=$(LOAD_KERNEL_ENTRY) $(KERNEL_CFLAGS)
++KERNEL_ENV := ARCH=$(TARGET_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_TOOLCHAIN) LOADADDR=$(LOAD_KERNEL_ENTRY) HOSTCFLAGS=-fcommon $(KERNEL_CFLAGS)
+ HOST_PROCESSOR := $(shell cat /proc/cpuinfo | grep processor | wc -l)
+ INSTALLED_KERNEL_TARGET := $(KERNEL_OUT)/kernel_img
+ TARGET_PREBUILT_KERNEL := $(KERNEL_OUT)/kernel_img
+@@ -1465,6 +1465,24 @@ INTERNAL_SYSTEMIMAGE_FILES := $(filter $(TARGET_OUT)/%, \
+ 
+ FULL_SYSTEMIMAGE_DEPS := $(INTERNAL_SYSTEMIMAGE_FILES) $(INTERNAL_USERIMAGES_DEPS)
+ 
++# PACKAGE overrides exclude new installs, but do not remove files left by an
++# incremental build. PAPER must never package two providers for the same package.
++RIDI_LEGACY_APP_PRUNER :=
++RIDI_LEGACY_APP_PRUNE_FLAGS :=
++ifeq ($(TARGET_DEVICE),e70q10)
++RIDI_LEGACY_APP_PRUNE_FLAGS := \
++    $(if $(filter $(TARGET_OUT)/app/ridi_webview/%,$(INTERNAL_SYSTEMIMAGE_FILES)),--webview) \
++    $(if $(filter $(TARGET_OUT)/app/RidiPaperLauncher/%,$(INTERNAL_SYSTEMIMAGE_FILES)),--launcher)
++ifneq ($(strip $(RIDI_LEGACY_APP_PRUNE_FLAGS)),)
++RIDI_LEGACY_APP_PRUNER := device/ridi/e70q10/tools/prune_legacy_system_apps.py
++FULL_SYSTEMIMAGE_DEPS += $(RIDI_LEGACY_APP_PRUNER)
++endif
++endif
++
++define ridi-prune-legacy-system-apps
++$(if $(RIDI_LEGACY_APP_PRUNER),$(hide) python $(RIDI_LEGACY_APP_PRUNER) --system-dir "$(TARGET_OUT)" $(RIDI_LEGACY_APP_PRUNE_FLAGS))
++endef
++
+ # ASAN libraries in the system image - add dependency.
+ ASAN_IN_SYSTEM_INSTALLED := $(TARGET_OUT)/asan.tar.bz2
+ ifneq (,$(SANITIZE_TARGET))
+@@ -1484,6 +1502,7 @@ $(INSTALLED_FILES_FILE): $(FULL_SYSTEMIMAGE_DEPS) $(FILESLIST)
+ 	@echo Installed file list: $@
+ 	@mkdir -p $(dir $@)
+ 	@rm -f $@
++	$(call ridi-prune-legacy-system-apps)
+ 	$(hide) $(FILESLIST) $(TARGET_OUT) > $(@:.txt=.json)
+ 	$(hide) build/tools/fileslist_util.py -c $(@:.txt=.json) > $@
+ 
+@@ -1514,6 +1533,7 @@ endif
+ # $(1): output file
+ define build-systemimage-target
+   @echo "Target system fs image: $(1)"
++  $(call ridi-prune-legacy-system-apps)
+   $(call create-system-vendor-symlink)
+   @mkdir -p $(dir $(1)) $(systemimage_intermediates) && rm -rf $(systemimage_intermediates)/system_image_info.txt
+   $(call generate-userimage-prop-dictionary, $(systemimage_intermediates)/system_image_info.txt, \

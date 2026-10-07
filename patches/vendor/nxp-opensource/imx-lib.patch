@@ -1,0 +1,21 @@
+diff --git a/pxp/pxp_lib.c b/pxp/pxp_lib.c
+index 92ebef64eed986877706f5062694c0bfaccdb49f..2d7d8c649b433b717c84ea77566640bfd2536f16 100644
+--- a/pxp/pxp_lib.c
++++ b/pxp/pxp_lib.c
+@@ -167,8 +167,14 @@ int pxp_get_virtmem(struct pxp_mem_desc *mem)
+ {
+ 	void *va_addr;
+ 
+-	va_addr = mmap(NULL, mem->size, PROT_READ | PROT_WRITE,
+-				      MAP_SHARED, fd, mem->phys_addr);
++	/*
++	 * i.MX6SL systems commonly return DMA addresses above 0x7fffffff.
++	 * Android's 32-bit off_t makes those addresses negative before mmap(2)
++	 * sees them, so the otherwise valid PXP allocation fails with EINVAL.
++	 * Keep the physical offset unsigned by using the 64-bit entry point.
++	 */
++	va_addr = mmap64(NULL, mem->size, PROT_READ | PROT_WRITE,
++			MAP_SHARED, fd, (off64_t)mem->phys_addr);
+ 
+ 	if (va_addr == MAP_FAILED) {
+ 		mem->virt_uaddr = 0;

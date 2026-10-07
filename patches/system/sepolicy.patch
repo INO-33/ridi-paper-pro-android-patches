@@ -1,0 +1,47 @@
+diff --git a/private/system_server.te b/private/system_server.te
+index fb38e5deb169cc6686f4d75d2aa1a11f3256353b..f682f5b9eabfd42cb7a68bd3d1fcf4abb2fd07bc 100644
+--- a/private/system_server.te
++++ b/private/system_server.te
+@@ -17,7 +17,13 @@ allow system_server zygote_tmpfs:file read;
+ 
+ # For art.
+ allow system_server dalvikcache_data_file:dir r_dir_perms;
+-allow system_server dalvikcache_data_file:file r_file_perms;
++allow system_server dalvikcache_data_file:file { r_file_perms execute };
++
++userdebug_or_eng(`
++  # Report execution from the runtime-generated system-server cache.  Eng
++  # products that only preopt the boot image create this cache on first boot.
++  auditallow system_server dalvikcache_data_file:file execute;
++')
+ 
+ # When running system server under --invoke-with, we'll try to load the boot image under the
+ # system server domain, following links to the system partition.
+diff --git a/public/domain.te b/public/domain.te
+index 373ff3a01019bb6293018933f5ceb1e2efe8fa4c..314fc616d51ed3e765890d7c747a7745365f4ae5 100644
+--- a/public/domain.te
++++ b/public/domain.te
+@@ -355,6 +355,7 @@ neverallow {
+     -dumpstate
+     -shell
+     userdebug_or_eng(`-su')
++    -system_server
+     -webview_zygote
+     -zygote
+ } {
+diff --git a/public/hal_graphics_allocator.te b/public/hal_graphics_allocator.te
+index f56e8f6d72297e4658a4a7c307634732d6c3b0e4..c46434de14567d267e469113ec368a68954bf50c 100644
+--- a/public/hal_graphics_allocator.te
++++ b/public/hal_graphics_allocator.te
+@@ -9,5 +9,11 @@ allow hal_graphics_allocator_client hal_graphics_mapper_hwservice:hwservice_mana
+ allow hal_graphics_allocator gpu_device:chr_file rw_file_perms;
+ allow hal_graphics_allocator ion_device:chr_file r_file_perms;
+ 
++# The legacy no-GPU framebuffer gralloc fallback is opened by the allocator
++# HAL.  Keep this at the public HAL attribute boundary, matching the composer
++# framebuffer contract, so API-versioned vendor policy resolves correctly.
++allow hal_graphics_allocator graphics_device:dir search;
++allow hal_graphics_allocator graphics_device:chr_file rw_file_perms;
++
+ # allow to run with real-time scheduling policy
+ allow hal_graphics_allocator self:capability sys_nice;

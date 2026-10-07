@@ -1,0 +1,40 @@
+diff --git a/clang-3289846/bin/clang b/clang-3289846/bin/clang
+index 2091f1d451635f52d41c473a120d9eace49babe2..82ff353cc741445d695558fe3b9c62978151ca5e 100755
+--- a/clang-3289846/bin/clang
++++ b/clang-3289846/bin/clang
+@@ -1,4 +1,4 @@
+-#!/usr/bin/python
++#!/usr/bin/env python
+ 
+ import os
+ import sys
+diff --git a/clang-3289846/bin/clang++ b/clang-3289846/bin/clang++
+index 2091f1d451635f52d41c473a120d9eace49babe2..82ff353cc741445d695558fe3b9c62978151ca5e 100755
+--- a/clang-3289846/bin/clang++
++++ b/clang-3289846/bin/clang++
+@@ -1,4 +1,4 @@
+-#!/usr/bin/python
++#!/usr/bin/env python
+ 
+ import os
+ import sys
+diff --git a/clang-4053586/bin/clang b/clang-4053586/bin/clang
+index 384783b8540c966e922ee64378f8a1bc55569cba..52be935716670172b247216cb031406d1f9e7c6e 100755
+--- a/clang-4053586/bin/clang
++++ b/clang-4053586/bin/clang
+@@ -1,4 +1,4 @@
+-#!/usr/bin/python
++#!/usr/bin/env python
+ 
+ import os
+ import shlex
+diff --git a/clang-4053586/bin/clang++ b/clang-4053586/bin/clang++
+index 384783b8540c966e922ee64378f8a1bc55569cba..52be935716670172b247216cb031406d1f9e7c6e 100755
+--- a/clang-4053586/bin/clang++
++++ b/clang-4053586/bin/clang++
+@@ -1,4 +1,4 @@
+-#!/usr/bin/python
++#!/usr/bin/env python
+ 
+ import os
+ import shlex

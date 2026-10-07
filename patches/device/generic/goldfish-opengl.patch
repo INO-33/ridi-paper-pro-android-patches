@@ -1,0 +1,64 @@
+diff --git a/common.mk b/common.mk
+index c15812e94f3dc3f9b60e64d3f5c9b6c066c69e25..38be5715229a90763a81eca55ebfb652e163ebca 100644
+--- a/common.mk
++++ b/common.mk
+@@ -42,6 +42,14 @@ ifeq ($(shell test $(PLATFORM_SDK_VERSION) -ge 26 && echo TREBLE),TREBLE)
+     emugl-begin-module += $(eval LOCAL_VENDOR_MODULE := true)
+ endif
+ 
++# e70q10_emulator is deliberately non-Treble.  Its Oreo META-EGL loader uses
++# /system/lib/egl for host GPU emulation, so install only the three EGL driver
++# entry modules there.  The opt-in board flag keeps every physical-device and
++# other emulator product on the normal Android 8 vendor layout.
++ifeq ($(PAPER_EMULATOR_SYSTEM_EGL),true)
++    emugl-begin-module += $(if $(filter libEGL_emulation libGLESv1_CM_emulation libGLESv2_emulation,$1),$(eval LOCAL_VENDOR_MODULE := false))
++endif
++
+ ifeq ($(shell test $(PLATFORM_SDK_VERSION) -lt 23 && echo PreMarshmallow),PreMarshmallow)
+     emugl-begin-module += $(eval include external/stlport/libstlport.mk)
+ endif
+@@ -263,4 +271,3 @@ else
+         $(eval LOCAL_MODULE_RELATIVE_PATH := $1)\
+         $(eval _emugl.$(LOCAL_MODULE).moved := true)
+ endif
+-
+diff --git a/system/egl/Android.mk b/system/egl/Android.mk
+index 2d7a5595b408acb9d36bf139529f49ad8a856f96..2135728455050012429f648dad962ad61723e44e 100644
+--- a/system/egl/Android.mk
++++ b/system/egl/Android.mk
+@@ -8,6 +8,15 @@ $(call emugl-set-shared-library-subpath,egl)
+ 
+ LOCAL_CFLAGS += -DLOG_TAG=\"EGL_emulation\" -DEGL_EGLEXT_PROTOTYPES -DWITH_GLES2
+ 
++# e70q10_emulator is a deliberately non-Treble Oreo image.  Its EGL entry
++# modules live under /system/lib/egl, so libEGL_emulation must load its GLES
++# client modules from the same partition instead of Oreo's normal /vendor.
++# The board flag is private to the paper emulator and does not affect physical
++# products or standard Treble emulator images.
++ifeq ($(PAPER_EMULATOR_SYSTEM_EGL),true)
++LOCAL_CFLAGS += -DPAPER_EMULATOR_SYSTEM_EGL
++endif
++
+ LOCAL_SRC_FILES := \
+     eglDisplay.cpp \
+     egl.cpp \
+diff --git a/system/egl/eglDisplay.cpp b/system/egl/eglDisplay.cpp
+index c7ff17913466ed70f58a9f785e3d34c27cea3b38..c5a031be0cb105618ac5c0a2a81fed8ca2c06d4f 100644
+--- a/system/egl/eglDisplay.cpp
++++ b/system/egl/eglDisplay.cpp
+@@ -80,7 +80,9 @@ eglDisplay::~eglDisplay()
+     pthread_mutex_destroy(&m_surfaceLock);
+ }
+ 
+-#if PLATFORM_SDK_VERSION >= 26
++#if defined(PAPER_EMULATOR_SYSTEM_EGL)
++#define PARTITION "/system"
++#elif PLATFORM_SDK_VERSION >= 26
+ #define PARTITION "/vendor"
+ #else
+ #define PARTITION "/system"
+@@ -571,4 +573,3 @@ void eglDisplay::onDestroySurface(EGLSurface surface) {
+     m_surfaces.erase(surface);
+     pthread_mutex_unlock(&m_surfaceLock);
+ }
+-
