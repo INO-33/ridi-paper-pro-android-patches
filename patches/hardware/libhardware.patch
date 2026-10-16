@@ -1,9 +1,9 @@
 diff --git a/include/hardware/ridi_eink.h b/include/hardware/ridi_eink.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..2c851420e162da3ca46d6762183e44e0b110860c
+index 0000000000000000000000000000000000000000..d622def199ff5d28435c639cfe3dd87c95f49d6e
 --- /dev/null
 +++ b/include/hardware/ridi_eink.h
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,40 @@
 +/*
 + * RIDI E70Q10 sleep-transition-only E Ink extension.
 + *
@@ -19,6 +19,7 @@ index 0000000000000000000000000000000000000000..2c851420e162da3ca46d6762183e44e0
 +enum {
 +    RIDI_EINK_EXTENSION_GET_SLEEP_SUBMIT_SEQUENCE = 1,
 +    RIDI_EINK_EXTENSION_SUBMIT_SLEEP_OVERLAY = 2,
++    RIDI_EINK_EXTENSION_CANCEL_SLEEP_OVERLAY = 3,
 +};
 +
 +enum {

@@ -1,8 +1,33 @@
 diff --git a/core/Makefile b/core/Makefile
-index a650565a1688e18171f162ce241a2dd074963f71..14b70c83c58d3597e8f13c48068fd8893448f3fc 100644
+index a650565a1688e18171f162ce241a2dd074963f71..bd9fe788f165fb834894c97ca68a86f4d1806eb1 100644
 --- a/core/Makefile
 +++ b/core/Makefile
-@@ -1373,7 +1373,7 @@ KERNEL_CROSS_TOOLCHAIN := `pwd`/prebuilts/gcc/linux-x86/arm/arm-linux-androideab
+@@ -224,6 +224,11 @@ else
+   BUILD_DISPLAY_ID := $(build_desc)
+ endif
+ 
++# Allow a board to customize Settings without changing OTA build identity.
++ifneq ($(strip $(TARGET_BUILD_DISPLAY_ID)),)
++  BUILD_DISPLAY_ID := $(strip $(TARGET_BUILD_DISPLAY_ID))
++endif
++
+ # Accepts a whitespace separated list of product locales such as
+ # (en_US en_AU en_GB...) and returns the first locale in the list with
+ # underscores replaced with hyphens. In the example above, this will
+@@ -617,6 +622,12 @@ endif
+ endif
+ 
+ INTERNAL_KERNEL_CMDLINE := $(strip $(BOARD_KERNEL_CMDLINE) buildvariant=$(TARGET_BUILD_VARIANT) $(VERITY_KEYID))
++ifdef BOARD_BOOTLOADER_CMDLINE_LIMIT
++bootloader_cmdline_bytes := $(shell printf '%s' '$(INTERNAL_KERNEL_CMDLINE)' | wc -c)
++ifneq ($(shell test $(bootloader_cmdline_bytes) -le $(BOARD_BOOTLOADER_CMDLINE_LIMIT) && echo ok),ok)
++$(error Boot command line is $(bootloader_cmdline_bytes) bytes; board limit is $(BOARD_BOOTLOADER_CMDLINE_LIMIT). Shorten BOARD_KERNEL_CMDLINE before building boot.img)
++endif
++endif
+ ifdef INTERNAL_KERNEL_CMDLINE
+ INTERNAL_BOOTIMAGE_ARGS += --cmdline "$(INTERNAL_KERNEL_CMDLINE)"
+ endif
+@@ -1373,7 +1384,7 @@ KERNEL_CROSS_TOOLCHAIN := `pwd`/prebuilts/gcc/linux-x86/arm/arm-linux-androideab
  KERNEL_IMAGE_NAME    := $(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/zImage
  endif
  KERNEL_CFLAGS := KCFLAGS=-mno-android
@@ -11,7 +36,7 @@ index a650565a1688e18171f162ce241a2dd074963f71..14b70c83c58d3597e8f13c48068fd889
  HOST_PROCESSOR := $(shell cat /proc/cpuinfo | grep processor | wc -l)
  INSTALLED_KERNEL_TARGET := $(KERNEL_OUT)/kernel_img
  TARGET_PREBUILT_KERNEL := $(KERNEL_OUT)/kernel_img
-@@ -1465,6 +1465,24 @@ INTERNAL_SYSTEMIMAGE_FILES := $(filter $(TARGET_OUT)/%, \
+@@ -1465,6 +1476,24 @@ INTERNAL_SYSTEMIMAGE_FILES := $(filter $(TARGET_OUT)/%, \
  
  FULL_SYSTEMIMAGE_DEPS := $(INTERNAL_SYSTEMIMAGE_FILES) $(INTERNAL_USERIMAGES_DEPS)
  
@@ -36,7 +61,7 @@ index a650565a1688e18171f162ce241a2dd074963f71..14b70c83c58d3597e8f13c48068fd889
  # ASAN libraries in the system image - add dependency.
  ASAN_IN_SYSTEM_INSTALLED := $(TARGET_OUT)/asan.tar.bz2
  ifneq (,$(SANITIZE_TARGET))
-@@ -1484,6 +1502,7 @@ $(INSTALLED_FILES_FILE): $(FULL_SYSTEMIMAGE_DEPS) $(FILESLIST)
+@@ -1484,6 +1513,7 @@ $(INSTALLED_FILES_FILE): $(FULL_SYSTEMIMAGE_DEPS) $(FILESLIST)
  	@echo Installed file list: $@
  	@mkdir -p $(dir $@)
  	@rm -f $@
@@ -44,7 +69,7 @@ index a650565a1688e18171f162ce241a2dd074963f71..14b70c83c58d3597e8f13c48068fd889
  	$(hide) $(FILESLIST) $(TARGET_OUT) > $(@:.txt=.json)
  	$(hide) build/tools/fileslist_util.py -c $(@:.txt=.json) > $@
  
-@@ -1514,6 +1533,7 @@ endif
+@@ -1514,6 +1544,7 @@ endif
  # $(1): output file
  define build-systemimage-target
    @echo "Target system fs image: $(1)"

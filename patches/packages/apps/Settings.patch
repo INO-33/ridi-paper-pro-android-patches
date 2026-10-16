@@ -1,8 +1,16 @@
 diff --git a/AndroidManifest.xml b/AndroidManifest.xml
-index 5419facaf8479d9bec579e368b84ef6dc5752f64..3d904e8428ba717ace6175f295bb1d0654d66505 100644
+index 5419facaf8479d9bec579e368b84ef6dc5752f64..d5743485f3829d83e7c42ccdae840d7da9ecd220 100644
 --- a/AndroidManifest.xml
 +++ b/AndroidManifest.xml
-@@ -87,7 +87,7 @@
+@@ -11,6 +11,7 @@
+     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
++    <uses-permission android:name="android.permission.WAKE_LOCK" />
+     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+     <uses-permission android:name="android.permission.DEVICE_POWER" />
+     <uses-permission android:name="android.permission.CHANGE_CONFIGURATION" />
+@@ -87,7 +88,7 @@
      <uses-permission android:name="android.permission.HIDE_NON_SYSTEM_OVERLAY_WINDOWS"/>
  
      <application android:label="@string/settings_label"
@@ -11,7 +19,7 @@ index 5419facaf8479d9bec579e368b84ef6dc5752f64..3d904e8428ba717ace6175f295bb1d06
              android:taskAffinity=""
              android:theme="@style/Theme.Settings"
              android:hardwareAccelerated="true"
-@@ -100,14 +100,84 @@
+@@ -100,14 +101,84 @@
  
          <!-- Settings -->
  
@@ -99,7 +107,7 @@ index 5419facaf8479d9bec579e368b84ef6dc5752f64..3d904e8428ba717ace6175f295bb1d06
              <meta-data android:name="com.android.settings.PRIMARY_PROFILE_CONTROLLED"
                  android:value="true" />
          </activity>
-@@ -118,11 +188,6 @@
+@@ -118,11 +189,6 @@
                  android:label="@string/settings_label_launcher"
                  android:launchMode="singleTask"
                  android:targetActivity="Settings">
@@ -111,7 +119,7 @@ index 5419facaf8479d9bec579e368b84ef6dc5752f64..3d904e8428ba717ace6175f295bb1d06
              <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts"/>
          </activity-alias>
  
-@@ -222,6 +287,7 @@
+@@ -222,6 +288,7 @@
                  android:taskAffinity=""
                  android:label="@string/wifi_settings"
                  android:icon="@drawable/ic_settings_wireless"
@@ -7356,10 +7364,10 @@ index 0000000000000000000000000000000000000000..35467ca44b7c5d026e9a47d5393f32d9
 +}
 diff --git a/src/com/android/settings/ridi/RidiFrontlightActivity.java b/src/com/android/settings/ridi/RidiFrontlightActivity.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..629bcb1305fc733fb34622d3ea09c7fa5c5bb4fa
+index 0000000000000000000000000000000000000000..166db3aef1c538580a88128cd80dac8296c7a8d3
 --- /dev/null
 +++ b/src/com/android/settings/ridi/RidiFrontlightActivity.java
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,255 @@
 +/*
 + * Copyright (C) 2026 E70Q10 Android port
 + *
@@ -7368,7 +7376,12 @@ index 0000000000000000000000000000000000000000..629bcb1305fc733fb34622d3ea09c7fa
 +package com.android.settings.ridi;
 +
 +import android.app.Activity;
++import android.content.ContentResolver;
++import android.content.Context;
 +import android.os.Bundle;
++import android.os.Handler;
++import android.os.Looper;
++import android.os.PowerManager;
 +import android.util.DisplayMetrics;
 +import android.view.View;
 +import android.view.WindowManager;
@@ -7384,6 +7397,9 @@ index 0000000000000000000000000000000000000000..629bcb1305fc733fb34622d3ea09c7fa
 +
 +    private RidiLevelBar mBrightnessBar;
 +    private RidiLevelBar mColorBar;
++    private View mBrightnessColumn;
++    private View mColorColumn;
++    private RidiFrontlightSession mSession;
 +
 +    @Override
 +    protected void onCreate(Bundle savedInstanceState) {
@@ -7391,20 +7407,50 @@ index 0000000000000000000000000000000000000000..629bcb1305fc733fb34622d3ea09c7fa
 +        RidiEinkRefresh.configure(getWindow().getDecorView());
 +        setContentView(R.layout.ridi_frontlight_settings);
 +
-+        final View brightness = findViewById(R.id.brightness_column);
-+        final View color = findViewById(R.id.temperature_column);
-+        bindBrightnessColumn(brightness);
-+        bindColorColumn(color);
++        mBrightnessColumn = findViewById(R.id.brightness_column);
++        mColorColumn = findViewById(R.id.temperature_column);
++        bindBrightnessColumn(mBrightnessColumn);
++        bindColorColumn(mColorColumn);
 +
 +        findViewById(R.id.frontlight_back).setOnClickListener(v -> finish());
-+        // onResume reads the levels once before the first frame.
++        setControlsEnabled(false);
 +    }
 +
 +    @Override
 +    protected void onResume() {
 +        super.onResume();
-+        updateValues();
++        setControlsEnabled(false);
++        final Handler callbacks = new Handler(Looper.getMainLooper());
++        mSession = new RidiFrontlightSession(
++                new FrontlightBackend(getApplicationContext()),
++                task -> callbacks.post(task), new RidiFrontlightSession.Listener() {
++                    @Override
++                    public void onLoaded(RidiFrontlightSession.State state) {
++                        mBrightnessBar.setMax(state.maxBrightness);
++                        mBrightnessBar.setLevel(state.brightness);
++                        mColorBar.setMax(state.maxColor);
++                        mColorBar.setLevel(state.color);
++                        setControlsEnabled(true);
++                    }
++
++                    @Override
++                    public void onWriteFailed() {
++                        showWriteError();
++                        setControlsEnabled(false);
++                        mSession.load();
++                    }
++                });
++        mSession.load();
 +        overridePendingTransition(0, 0);
++    }
++
++    @Override
++    protected void onPause() {
++        if (mSession != null) {
++            mSession.close();
++            mSession = null;
++        }
++        super.onPause();
 +    }
 +
 +    @Override
@@ -7467,36 +7513,24 @@ index 0000000000000000000000000000000000000000..629bcb1305fc733fb34622d3ea09c7fa
 +    }
 +
 +    private void changeBrightness(int delta) {
-+        if (!RidiFrontlightController.setBrightness(getContentResolver(),
-+                RidiFrontlightController.getBrightness() + delta)) {
-+            showWriteError();
-+        }
-+        updateValues();
++        if (mSession == null) return;
++        mBrightnessBar.setLevel(mBrightnessBar.getLevel() + delta);
++        mSession.commit(RidiFrontlightSession.BRIGHTNESS, mBrightnessBar.getLevel());
 +    }
 +
 +    private void changeColor(int delta) {
-+        if (!RidiFrontlightController.setColor(getContentResolver(),
-+                RidiFrontlightController.getColor() + delta)) {
-+            showWriteError();
-+        }
-+        updateValues();
++        if (mSession == null) return;
++        mColorBar.setLevel(mColorBar.getLevel() + delta);
++        mSession.commit(RidiFrontlightSession.COLOR, mColorBar.getLevel());
 +    }
 +
-+    private void updateValues() {
-+        if (mBrightnessBar == null || mColorBar == null) {
-+            return;
++    private void setControlsEnabled(boolean enabled) {
++        mBrightnessBar.setEnabled(enabled);
++        mColorBar.setEnabled(enabled);
++        for (View column : new View[] {mBrightnessColumn, mColorColumn}) {
++            column.findViewById(R.id.increase).setEnabled(enabled);
++            column.findViewById(R.id.decrease).setEnabled(enabled);
 +        }
-+        final int brightness = RidiFrontlightController.getBrightness();
-+        final int maxBrightness = RidiFrontlightController.getMaxBrightness();
-+        mBrightnessBar.setMax(maxBrightness);
-+        mBrightnessBar.setLevel(brightness);
-+        RidiEinkRefresh.invalidate(mBrightnessBar);
-+
-+        final int color = RidiFrontlightController.getColor();
-+        final int maxColor = RidiFrontlightController.getMaxColor();
-+        mColorBar.setMax(maxColor);
-+        mColorBar.setLevel(color);
-+        RidiEinkRefresh.invalidate(mColorBar);
 +    }
 +
 +    private void showWriteError() {
@@ -7516,25 +7550,76 @@ index 0000000000000000000000000000000000000000..629bcb1305fc733fb34622d3ea09c7fa
 +        public void onLevelChanging(RidiLevelBar bar, int level) {
 +            // The stock popup communicates the value through the 20-cell bar;
 +            // it does not add a numeric label below the gauge.
-+            if (mBrightness) {
-+                // Preview only: persist the final value in onLevelChanged().
-+                RidiFrontlightController.previewBrightness(level);
-+            } else {
-+                RidiFrontlightController.previewColor(level);
-+            }
++            if (mSession != null) mSession.preview(mBrightness
++                    ? RidiFrontlightSession.BRIGHTNESS : RidiFrontlightSession.COLOR, level);
 +        }
 +
 +        @Override
 +        public void onLevelChanged(RidiLevelBar bar, int level) {
-+            final boolean success = mBrightness
-+                    ? RidiFrontlightController.setBrightness(
-+                            getContentResolver(), level)
-+                    : RidiFrontlightController.setColor(
-+                            getContentResolver(), level);
-+            if (!success) {
-+                showWriteError();
++            if (mSession != null) mSession.commit(mBrightness
++                    ? RidiFrontlightSession.BRIGHTNESS : RidiFrontlightSession.COLOR, level);
++        }
++    }
++
++    /** Only holds application services; queued saves never retain the popup. */
++    private static final class FrontlightBackend implements RidiFrontlightSession.Backend {
++        private final ContentResolver mResolver;
++        private final PowerManager mPower;
++
++        FrontlightBackend(Context context) {
++            mResolver = context.getContentResolver();
++            mPower = context.getSystemService(PowerManager.class);
++        }
++
++        @Override
++        public RidiFrontlightSession.State read() {
++            return new RidiFrontlightSession.State(
++                    RidiFrontlightController.getBrightness(),
++                    RidiFrontlightController.getMaxBrightness(),
++                    RidiFrontlightController.getColor(), RidiFrontlightController.getMaxColor());
++        }
++
++        @Override
++        public void preview(int control, int level, RidiFrontlightSession.State limits) {
++            apply(control, level, limits, false);
++        }
++
++        @Override
++        public boolean commit(int control, int level, RidiFrontlightSession.State limits) {
++            if (!apply(control, level, limits, true)) return false;
++            return control == RidiFrontlightSession.BRIGHTNESS
++                    ? RidiFrontlightController.persistBrightness(
++                            mResolver, level, limits.maxBrightness)
++                    : RidiFrontlightController.persistColor(mResolver, level);
++        }
++
++        private boolean apply(int control, int level, RidiFrontlightSession.State limits,
++                boolean finalValue) {
++            final boolean interactive = mPower.isInteractive();
++            if (!interactive && !finalValue) return true;
++            boolean success;
++            if (control == RidiFrontlightSession.BRIGHTNESS) {
++                // Persist the selected level while leaving the sleeping light at zero.
++                success = RidiFrontlightController.previewBrightness(
++                        interactive ? level : 0, limits.maxBrightness);
++            } else {
++                success = interactive || RidiFrontlightController.previewBrightness(
++                        0, limits.maxBrightness);
++                if (success) success = RidiFrontlightController.previewColor(level, limits.maxColor);
 +            }
-+            updateValues();
++            // Screen-off can occur while the sysfs write is in progress.
++            if (!mPower.isInteractive()) success &=
++                    RidiFrontlightController.previewBrightness(0, limits.maxBrightness);
++            return success;
++        }
++
++        @Override
++        public Runnable keepAwakeForCommit() {
++            final PowerManager.WakeLock lock = mPower.newWakeLock(
++                    PowerManager.PARTIAL_WAKE_LOCK, "RidiFrontlight:save");
++            lock.setReferenceCounted(false);
++            lock.acquire(5000);
++            return lock::release;
 +        }
 +    }
 +}
@@ -7566,10 +7651,10 @@ index 0000000000000000000000000000000000000000..5b57fedd55e9af9eaac4121364be5526
 +}
 diff --git a/src/com/android/settings/ridi/RidiFrontlightController.java b/src/com/android/settings/ridi/RidiFrontlightController.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..c2fe06f94e3cc644c9f3efcdf0bd89f0ea625065
+index 0000000000000000000000000000000000000000..b075add9710764da6e3f096fff3711c0c4fe2ff3
 --- /dev/null
 +++ b/src/com/android/settings/ridi/RidiFrontlightController.java
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,192 @@
 +/*
 + * Copyright (C) 2026 E70Q10 Android port
 + *
@@ -7638,9 +7723,17 @@ index 0000000000000000000000000000000000000000..c2fe06f94e3cc644c9f3efcdf0bd89f0
 +    static boolean setBrightness(ContentResolver resolver, int requested) {
 +        final int maxBrightness = getMaxBrightness();
 +        final int value = clamp(requested, 0, maxBrightness);
-+        if (!previewBrightness(value)) {
++        if (!previewBrightness(value, maxBrightness)) {
 +            return false;
 +        }
++
++        return persistBrightness(resolver, value, maxBrightness);
++    }
++
++    /** Save an already applied level, or a final level selected during screen-off. */
++    static boolean persistBrightness(ContentResolver resolver, int requested,
++            int maxBrightness) {
++        final int value = clamp(requested, 0, maxBrightness);
 +
 +        /*
 +         * Keep Android's display-power brightness in sync with the RIDI
@@ -7674,15 +7767,24 @@ index 0000000000000000000000000000000000000000..c2fe06f94e3cc644c9f3efcdf0bd89f0
 +     * display power controller for every intermediate level.
 +     */
 +    static boolean previewBrightness(int requested) {
-+        final int value = clamp(requested, 0, getMaxBrightness());
++        return previewBrightness(requested, getMaxBrightness());
++    }
++
++    static boolean previewBrightness(int requested, int maxBrightness) {
++        final int value = clamp(requested, 0, maxBrightness);
 +        return writeInt(BRIGHTNESS, value);
 +    }
 +
 +    static boolean setColor(ContentResolver resolver, int requested) {
-+        final int value = clamp(requested, 0, getMaxColor());
-+        if (!previewColor(value)) {
++        final int maxColor = getMaxColor();
++        final int value = clamp(requested, 0, maxColor);
++        if (!previewColor(value, maxColor)) {
 +            return false;
 +        }
++        return persistColor(resolver, value);
++    }
++
++    static boolean persistColor(ContentResolver resolver, int value) {
 +        if (!Settings.System.putInt(resolver, SETTING_COLOR, value)) {
 +            Log.e(TAG, "Cannot persist frontlight color");
 +            return false;
@@ -7692,7 +7794,11 @@ index 0000000000000000000000000000000000000000..c2fe06f94e3cc644c9f3efcdf0bd89f0
 +
 +    /** Applies color temperature immediately while persistence waits for release. */
 +    static boolean previewColor(int requested) {
-+        final int value = clamp(requested, 0, getMaxColor());
++        return previewColor(requested, getMaxColor());
++    }
++
++    static boolean previewColor(int requested, int maxColor) {
++        final int value = clamp(requested, 0, maxColor);
 +        return writeInt(COLOR, value);
 +    }
 +
@@ -7833,6 +7939,190 @@ index 0000000000000000000000000000000000000000..971b28622bb95cf06e092b1aadd2b615
 +    public int update(Uri uri, ContentValues values, String selection,
 +            String[] selectionArgs) {
 +        throw new UnsupportedOperationException();
++    }
++}
+diff --git a/src/com/android/settings/ridi/RidiFrontlightSession.java b/src/com/android/settings/ridi/RidiFrontlightSession.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..7f2bf3e19ea83706f7832e675fb33ed0f0d6d9fe
+--- /dev/null
++++ b/src/com/android/settings/ridi/RidiFrontlightSession.java
+@@ -0,0 +1,178 @@
++/* Copyright (C) 2026 E70Q10 Android port. Licensed under Apache License 2.0. */
++package com.android.settings.ridi;
++
++import java.util.concurrent.Executor;
++import java.util.concurrent.LinkedBlockingQueue;
++import java.util.concurrent.ThreadPoolExecutor;
++import java.util.concurrent.TimeUnit;
++
++/** Serial device work for one popup; touch and drawing never wait for device I/O. */
++final class RidiFrontlightSession {
++    static final int BRIGHTNESS = 0;
++    static final int COLOR = 1;
++
++    static final class State {
++        final int brightness, maxBrightness, color, maxColor;
++
++        State(int brightness, int maxBrightness, int color, int maxColor) {
++            this.maxBrightness = Math.max(1, maxBrightness);
++            this.maxColor = Math.max(1, maxColor);
++            this.brightness = clamp(brightness, this.maxBrightness);
++            this.color = clamp(color, this.maxColor);
++        }
++    }
++
++    interface Backend {
++        State read();
++        void preview(int control, int level, State limits);
++        boolean commit(int control, int level, State limits);
++        /** Acquired before enqueueing a final save; release runs in finally. */
++        Runnable keepAwakeForCommit();
++    }
++
++    interface Listener {
++        void onLoaded(State state);
++        void onWriteFailed();
++    }
++
++    // Shared by popup instances so a closing popup cannot write after a new one.
++    // No polling: the sole worker exits after five idle seconds.
++    private static final Executor WORKER = new ThreadPoolExecutor(0, 1, 5,
++            TimeUnit.SECONDS, new LinkedBlockingQueue<>(),
++            task -> new Thread(task, "RidiFrontlight"));
++
++    private final Backend mBackend;
++    private final Executor mWorker;
++    private final Executor mCallbacks;
++    private Listener mListener;
++    private State mLimits;
++    private boolean mActive = true;
++    private int mBrightness, mColor, mRevision;
++    private boolean mBrightnessDirty, mColorDirty;
++    private Preview mPending;
++
++    RidiFrontlightSession(Backend backend, Executor callbacks, Listener listener) {
++        this(backend, WORKER, callbacks, listener);
++    }
++
++    RidiFrontlightSession(Backend backend, Executor worker, Executor callbacks,
++            Listener listener) {
++        mBackend = backend;
++        mWorker = worker;
++        mCallbacks = callbacks;
++        mListener = listener;
++    }
++
++    synchronized void load() {
++        final int revision = mRevision;
++        mWorker.execute(() -> {
++            final State state = mBackend.read();
++            mCallbacks.execute(() -> {
++                synchronized (RidiFrontlightSession.this) {
++                    if (!mActive || mRevision != revision) return;
++                    mLimits = state;
++                    mBrightness = state.brightness;
++                    mColor = state.color;
++                    mListener.onLoaded(state);
++                }
++            });
++        });
++    }
++
++    synchronized void preview(int control, int requested) {
++        if (!mActive || mLimits == null) return;
++        final int level = setTarget(control, requested);
++        if (control == BRIGHTNESS) mBrightnessDirty = true;
++        else mColorDirty = true;
++        ++mRevision;
++        if (mPending == null) {
++            mPending = new Preview();
++            mPending.set(control, level);
++            mWorker.execute(mPending);
++        } else {
++            mPending.set(control, level);
++        }
++    }
++
++    synchronized void commit(int control, int requested) {
++        if (!mActive || mLimits == null) return;
++        final int level = setTarget(control, requested);
++        ++mRevision;
++        // Seal the previous preview task. Later gestures get a new task AFTER
++        // this immutable commit, rather than modifying a task queued before it.
++        if (mPending != null) {
++            mPending.set(control, -1);
++            mPending = null;
++        }
++        if (control == BRIGHTNESS) mBrightnessDirty = false;
++        else mColorDirty = false;
++        enqueueCommit(control, level);
++    }
++
++    synchronized void close() {
++        if (!mActive) return;
++        mActive = false;
++        mListener = null;
++        mPending = null;
++        // Also save a gesture interrupted by screen-off/back without UP.
++        if (mBrightnessDirty) enqueueCommit(BRIGHTNESS, mBrightness);
++        if (mColorDirty) enqueueCommit(COLOR, mColor);
++    }
++
++    private void enqueueCommit(int control, int level) {
++        final State limits = mLimits;
++        final int revision = mRevision;
++        final Runnable release = mBackend.keepAwakeForCommit();
++        mWorker.execute(() -> {
++            boolean success;
++            try {
++                success = mBackend.commit(control, level, limits);
++            } finally {
++                release.run();
++            }
++            if (!success) mCallbacks.execute(() -> {
++                synchronized (RidiFrontlightSession.this) {
++                    if (mActive && mRevision == revision) mListener.onWriteFailed();
++                }
++            });
++        });
++    }
++
++    private int setTarget(int control, int requested) {
++        if (control == BRIGHTNESS) {
++            mBrightness = clamp(requested, mLimits.maxBrightness);
++            return mBrightness;
++        }
++        mColor = clamp(requested, mLimits.maxColor);
++        return mColor;
++    }
++
++    private static int clamp(int value, int max) {
++        return Math.max(0, Math.min(max, value));
++    }
++
++    private final class Preview implements Runnable {
++        private int brightness = -1, color = -1;
++
++        void set(int control, int level) {
++            if (control == BRIGHTNESS) brightness = level;
++            else color = level;
++        }
++
++        @Override
++        public void run() {
++            final int b, c;
++            final State limits;
++            synchronized (RidiFrontlightSession.this) {
++                if (!mActive) return;
++                if (mPending == this) mPending = null;
++                b = brightness;
++                c = color;
++                limits = mLimits;
++            }
++            // Never hold the session lock while doing sysfs/I2C work.
++            if (b >= 0) mBackend.preview(BRIGHTNESS, b, limits);
++            if (c >= 0) mBackend.preview(COLOR, c, limits);
++        }
 +    }
 +}
 diff --git a/src/com/android/settings/ridi/RidiLevelBar.java b/src/com/android/settings/ridi/RidiLevelBar.java

@@ -209,13 +209,29 @@ index 1b0fe068107652b813692e68cde28f3813b7d6f6..c38f47468f9c7a0f8d846e569b9d9ef7
  
      fence = new Fence();
 diff --git a/libs/gui/ISurfaceComposer.cpp b/libs/gui/ISurfaceComposer.cpp
-index 0a0d112af629159e52146b053be582f7c975925c..f726029109068d357416ea0886481dbae072c540 100644
+index 0a0d112af629159e52146b053be582f7c975925c..d166823743c9f03dd65293384ef61196696771c4 100644
 --- a/libs/gui/ISurfaceComposer.cpp
 +++ b/libs/gui/ISurfaceComposer.cpp
-@@ -305,6 +305,47 @@ public:
+@@ -305,6 +305,63 @@ public:
          return reply.readInt32();
      }
  
++    virtual status_t cancelEinkSleepOverlay() {
++        Parcel data, reply;
++        data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
++        const status_t err = remote()->transact(BnSurfaceComposer::CANCEL_EINK_SLEEP_OVERLAY,
++                data, &reply);
++        return err == NO_ERROR ? reply.readInt32() : err;
++    }
++
++    virtual status_t requestEinkWakeRefresh() {
++        Parcel data, reply;
++        data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
++        const status_t err = remote()->transact(BnSurfaceComposer::REQUEST_EINK_WAKE_REFRESH,
++                data, &reply);
++        return err == NO_ERROR ? reply.readInt32() : err;
++    }
++
 +    virtual int32_t getEinkSleepSubmitSequence() const
 +    {
 +        Parcel data, reply;
@@ -260,10 +276,20 @@ index 0a0d112af629159e52146b053be582f7c975925c..f726029109068d357416ea0886481dba
      virtual status_t setActiveConfig(const sp<IBinder>& display, int id)
      {
          Parcel data, reply;
-@@ -647,6 +688,34 @@ status_t BnSurfaceComposer::onTransact(
+@@ -647,6 +704,44 @@ status_t BnSurfaceComposer::onTransact(
              reply->writeInt32(id);
              return NO_ERROR;
          }
++        case CANCEL_EINK_SLEEP_OVERLAY: {
++            CHECK_INTERFACE(ISurfaceComposer, data, reply);
++            reply->writeInt32(cancelEinkSleepOverlay());
++            return NO_ERROR;
++        }
++        case REQUEST_EINK_WAKE_REFRESH: {
++            CHECK_INTERFACE(ISurfaceComposer, data, reply);
++            reply->writeInt32(requestEinkWakeRefresh());
++            return NO_ERROR;
++        }
 +        case GET_EINK_SLEEP_SUBMIT_SEQUENCE: {
 +            CHECK_INTERFACE(ISurfaceComposer, data, reply);
 +            reply->writeInt32(getEinkSleepSubmitSequence());
@@ -421,13 +447,21 @@ index 409a3cb0761015a2a87f610c791c509027992e39..cf208e484b9fd8e01d7d85b71be5f283
      }
      return err;
 diff --git a/libs/gui/SurfaceComposerClient.cpp b/libs/gui/SurfaceComposerClient.cpp
-index 7ae2672249f19de115bf8574f4c0da8985de55f9..5fd673213293b9845a2b51bd8590fff359e9c171 100644
+index 7ae2672249f19de115bf8574f4c0da8985de55f9..677d9aa9bf50eebb68a69583fe2be124fdfde35b 100644
 --- a/libs/gui/SurfaceComposerClient.cpp
 +++ b/libs/gui/SurfaceComposerClient.cpp
-@@ -901,6 +901,23 @@ int SurfaceComposerClient::getActiveConfig(const sp<IBinder>& display) {
+@@ -901,6 +901,31 @@ int SurfaceComposerClient::getActiveConfig(const sp<IBinder>& display) {
      return ComposerService::getComposerService()->getActiveConfig(display);
  }
  
++status_t SurfaceComposerClient::cancelEinkSleepOverlay() {
++    return ComposerService::getComposerService()->cancelEinkSleepOverlay();
++}
++
++status_t SurfaceComposerClient::requestEinkWakeRefresh() {
++    return ComposerService::getComposerService()->requestEinkWakeRefresh();
++}
++
 +int32_t SurfaceComposerClient::getEinkSleepSubmitSequence() {
 +    return ComposerService::getComposerService()->getEinkSleepSubmitSequence();
 +}
@@ -513,14 +547,17 @@ index 6d16e7426c346c57217088593c093bd14f0fd443..96f38db41bcb85fd733145920c5e8134
      };
  
 diff --git a/libs/gui/include/gui/ISurfaceComposer.h b/libs/gui/include/gui/ISurfaceComposer.h
-index f80ba000b447c8389e24019cb2700b9618373673..baf7c3b2fe4dd25d25b6d8c7868ae79a1a3ba22a 100644
+index f80ba000b447c8389e24019cb2700b9618373673..d821f29e7923f06d1f1a4dffbc2c9a2dc193f852 100644
 --- a/libs/gui/include/gui/ISurfaceComposer.h
 +++ b/libs/gui/include/gui/ISurfaceComposer.h
-@@ -153,6 +153,18 @@ public:
+@@ -153,6 +153,21 @@ public:
       * currently active */
      virtual int getActiveConfig(const sp<IBinder>& display) = 0;
  
 +    /* Last reader sleep generation whose MXCFB_SEND_UPDATE succeeded. */
++    // Cancel only the one-shot sleep overlay and its frame suppression.
++    virtual status_t cancelEinkSleepOverlay() = 0;
++
 +    virtual int32_t getEinkSleepSubmitSequence() const = 0;
 +
 +    /* Last transparent sleep generation requested, including an in-flight one. */
@@ -535,7 +572,17 @@ index f80ba000b447c8389e24019cb2700b9618373673..baf7c3b2fe4dd25d25b6d8c7868ae79a
      /* specifies which configuration (of those returned by getDisplayInfo)
       * should be used */
      virtual status_t setActiveConfig(const sp<IBinder>& display, int id) = 0;
-@@ -229,7 +241,10 @@ public:
+@@ -195,6 +210,9 @@ public:
+     virtual status_t enableVSyncInjections(bool enable) = 0;
+ 
+     virtual status_t injectVSync(nsecs_t when) = 0;
++
++    /* Wake-only GC16 request plus redraw, including unchanged/fullscreen UI. */
++    virtual status_t requestEinkWakeRefresh() = 0;
+ };
+ 
+ // ----------------------------------------------------------------------------
+@@ -229,7 +247,12 @@ public:
          SET_ACTIVE_COLOR_MODE,
          ENABLE_VSYNC_INJECTIONS,
          INJECT_VSYNC,
@@ -543,7 +590,9 @@ index f80ba000b447c8389e24019cb2700b9618373673..baf7c3b2fe4dd25d25b6d8c7868ae79a
 +        CREATE_SCOPED_CONNECTION,
 +        GET_EINK_SLEEP_SUBMIT_SEQUENCE,
 +        GET_EINK_SLEEP_OVERLAY_SEQUENCE,
-+        SUBMIT_EINK_SLEEP_OVERLAY
++        SUBMIT_EINK_SLEEP_OVERLAY,
++        CANCEL_EINK_SLEEP_OVERLAY,
++        REQUEST_EINK_WAKE_REFRESH
      };
  
      virtual status_t onTransact(uint32_t code, const Parcel& data,
@@ -584,14 +633,16 @@ index 0f7e12a2282e1452b804f814fea74679119b37ba..f1336c92fbf496d1607872253c6d09d6
      // IGraphicBufferProducer::setGenerationNumber for more information.
      uint32_t mGenerationNumber;
 diff --git a/libs/gui/include/gui/SurfaceComposerClient.h b/libs/gui/include/gui/SurfaceComposerClient.h
-index 145c0597bde6937fe880a89e3648065635d900e7..f176c22d55b69063fb9be994f40a063661117895 100644
+index 145c0597bde6937fe880a89e3648065635d900e7..fd850bfae7c0504112948fdc1c7310c24019d03d 100644
 --- a/libs/gui/include/gui/SurfaceComposerClient.h
 +++ b/libs/gui/include/gui/SurfaceComposerClient.h
-@@ -79,6 +79,14 @@ public:
+@@ -79,6 +79,16 @@ public:
      // returned by getDisplayInfo)
      static int getActiveConfig(const sp<IBinder>& display);
  
 +    // Last reader sleep generation physically accepted by the EPDC ioctl.
++    static status_t cancelEinkSleepOverlay();
++    static status_t requestEinkWakeRefresh();
 +    static int32_t getEinkSleepSubmitSequence();
 +    static int32_t getEinkSleepOverlaySequence();
 +    static status_t submitEinkSleepOverlay(int fd, int32_t width, int32_t height,
@@ -1335,7 +1386,7 @@ index 68d7a18d3a232d096532a3fbe4d15669cf8e0f71..dd0e0657f30872a7b578ab196cc74106
  
  #ifndef USE_HWC2
 diff --git a/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.cpp b/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.cpp
-index dcb29135b9a7afbea7fbcb458c7147334d3e4d06..b61106d50af7904b39492fec895e6695f2d0c083 100644
+index dcb29135b9a7afbea7fbcb458c7147334d3e4d06..cee3b98307f7843dd0cfdb83f544beedd6f127cb 100644
 --- a/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.cpp
 +++ b/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.cpp
 @@ -36,6 +36,7 @@
@@ -1435,10 +1486,19 @@ index dcb29135b9a7afbea7fbcb458c7147334d3e4d06..b61106d50af7904b39492fec895e6695
  status_t HWComposer::prepare() {
      Mutex::Autolock _l(mDisplayLock);
      for (size_t i=0 ; i<mNumDisplays ; i++) {
-@@ -804,6 +867,44 @@ status_t HWComposer::commit() {
+@@ -804,6 +867,53 @@ status_t HWComposer::commit() {
      return (status_t)err;
  }
  
++status_t HWComposer::cancelEinkSleepOverlay() {
++    if (mHwc == nullptr || mHwc->reserved_proc[0] == nullptr)
++        return INVALID_OPERATION;
++    typedef int32_t (*ridi_extension_fn)(hwc_composer_device_1_t*, int32_t, void*);
++    ridi_extension_fn extension = reinterpret_cast<ridi_extension_fn>(
++            mHwc->reserved_proc[0]);
++    return extension(mHwc, RIDI_EINK_EXTENSION_CANCEL_SLEEP_OVERLAY, nullptr);
++}
++
 +int32_t HWComposer::getEinkSleepSubmitSequence() const {
 +    if (mHwc == nullptr || mHwc->reserved_proc[0] == nullptr) {
 +        return 0;
@@ -1480,7 +1540,7 @@ index dcb29135b9a7afbea7fbcb458c7147334d3e4d06..b61106d50af7904b39492fec895e6695
  status_t HWComposer::setPowerMode(int disp, int mode) {
      LOG_FATAL_IF(disp >= VIRTUAL_DISPLAY_ID_BASE);
      if (mHwc) {
-@@ -850,6 +951,15 @@ void HWComposer::disconnectDisplay(int disp) {
+@@ -850,6 +960,15 @@ void HWComposer::disconnectDisplay(int disp) {
  
  int HWComposer::getVisualID() const {
      if (mHwc && hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_1)) {
@@ -1496,7 +1556,7 @@ index dcb29135b9a7afbea7fbcb458c7147334d3e4d06..b61106d50af7904b39492fec895e6695
          // FIXME: temporary hack until HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED
          // is supported by the implementation. we can only be in this case
          // if we have HWC 1.1
-@@ -1001,6 +1111,22 @@ public:
+@@ -1001,6 +1120,22 @@ public:
          l->blending = HWC_BLENDING_NONE;
          l->visibleRegionScreen.numRects = 0;
          l->visibleRegionScreen.rects = NULL;
@@ -1519,7 +1579,7 @@ index dcb29135b9a7afbea7fbcb458c7147334d3e4d06..b61106d50af7904b39492fec895e6695
          l->acquireFenceFd = -1;
          l->releaseFenceFd = -1;
          l->planeAlpha = 0xFF;
-@@ -1073,6 +1199,12 @@ public:
+@@ -1073,6 +1208,12 @@ public:
                  mSurfaceDamageRegions->itemAt(mIndex).getArray(
                  &surfaceDamage.numRects));
      }
@@ -1532,7 +1592,7 @@ index dcb29135b9a7afbea7fbcb458c7147334d3e4d06..b61106d50af7904b39492fec895e6695
      virtual void setSidebandStream(const sp<NativeHandle>& stream) {
          ALOG_ASSERT(stream->handle() != NULL);
          getLayer()->compositionType = HWC_SIDEBAND;
-@@ -1336,7 +1468,13 @@ HWComposer::DisplayData::DisplayData()
+@@ -1336,7 +1477,13 @@ HWComposer::DisplayData::DisplayData()
      lastRetireFence(Fence::NO_FENCE), lastDisplayFence(Fence::NO_FENCE),
      outbufHandle(NULL), outbufAcquireFence(Fence::NO_FENCE),
      events(0)
@@ -1548,7 +1608,7 @@ index dcb29135b9a7afbea7fbcb458c7147334d3e4d06..b61106d50af7904b39492fec895e6695
  HWComposer::DisplayData::~DisplayData() {
      free(list);
 diff --git a/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.h b/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.h
-index 4bc63bbac847884b8ead0ec186be247dae57e04b..e88eeb7b0fd2066829bcf30885c14c1121bc6ba5 100644
+index 4bc63bbac847884b8ead0ec186be247dae57e04b..c1407563382f26db31e96c047897db9581a6b2c2 100644
 --- a/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.h
 +++ b/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.h
 @@ -25,6 +25,9 @@
@@ -1561,10 +1621,11 @@ index 4bc63bbac847884b8ead0ec186be247dae57e04b..e88eeb7b0fd2066829bcf30885c14c11
  
  #include <utils/BitSet.h>
  #include <utils/Condition.h>
-@@ -101,6 +104,12 @@ public:
+@@ -101,6 +104,13 @@ public:
      // commits the list
      status_t commit();
  
++    status_t cancelEinkSleepOverlay();
 +    int32_t getEinkSleepSubmitSequence() const;
 +    status_t submitEinkSleepOverlay(int fd, int32_t width, int32_t height,
 +            int32_t strideBytes, int32_t alphaLeft, int32_t alphaTop,
@@ -1574,7 +1635,7 @@ index 4bc63bbac847884b8ead0ec186be247dae57e04b..e88eeb7b0fd2066829bcf30885c14c11
      // set power mode
      status_t setPowerMode(int disp, int mode);
  
-@@ -142,6 +151,17 @@ public:
+@@ -142,6 +152,17 @@ public:
      status_t setOutputBuffer(int32_t id, const sp<Fence>& acquireFence,
              const sp<GraphicBuffer>& buf);
  
@@ -1592,7 +1653,7 @@ index 4bc63bbac847884b8ead0ec186be247dae57e04b..e88eeb7b0fd2066829bcf30885c14c11
      // Get the retire fence for the last committed frame. This fence will
      // signal when the h/w composer is completely finished with the frame.
      // For physical displays, it is no longer being displayed. For virtual
-@@ -173,6 +193,7 @@ public:
+@@ -173,6 +194,7 @@ public:
          virtual void setCrop(const FloatRect& crop) = 0;
          virtual void setVisibleRegionScreen(const Region& reg) = 0;
          virtual void setSurfaceDamage(const Region& reg) = 0;
@@ -1600,7 +1661,7 @@ index 4bc63bbac847884b8ead0ec186be247dae57e04b..e88eeb7b0fd2066829bcf30885c14c11
          virtual void setSidebandStream(const sp<NativeHandle>& stream) = 0;
          virtual void setBuffer(const sp<GraphicBuffer>& buffer) = 0;
          virtual void setAcquireFenceFd(int fenceFd) = 0;
-@@ -366,6 +387,12 @@ private:
+@@ -366,6 +388,12 @@ private:
          // modified.
          Vector<Region> visibleRegions;
          Vector<Region> surfaceDamageRegions;
@@ -1956,7 +2017,7 @@ index 6aa3fb2df03d0ee53b09d1ff59d2608e18552c18..524dc0b9cdf41bf772ba41aefac50bce
          if (err != NO_ERROR) {
              // still didn't work, probably because we're on the emulator...
 diff --git a/services/surfaceflinger/SurfaceFlinger.h b/services/surfaceflinger/SurfaceFlinger.h
-index acfad46526bc3e5cede75b1a0820b6d5730d22d9..be662212c43a96c7e65f69591cb80b20a17b60c1 100644
+index acfad46526bc3e5cede75b1a0820b6d5730d22d9..7554121a4da1ab5b50a1fe58edcb97271910792a 100644
 --- a/services/surfaceflinger/SurfaceFlinger.h
 +++ b/services/surfaceflinger/SurfaceFlinger.h
 @@ -17,6 +17,7 @@
@@ -1967,10 +2028,12 @@ index acfad46526bc3e5cede75b1a0820b6d5730d22d9..be662212c43a96c7e65f69591cb80b20
  #include <memory>
  #include <stdint.h>
  #include <sys/types.h>
-@@ -288,6 +289,12 @@ private:
+@@ -288,6 +289,14 @@ private:
      virtual status_t getDisplayConfigs(const sp<IBinder>& display,
              Vector<DisplayInfo>* configs);
      virtual int getActiveConfig(const sp<IBinder>& display);
++    virtual status_t cancelEinkSleepOverlay();
++    virtual status_t requestEinkWakeRefresh();
 +    virtual int32_t getEinkSleepSubmitSequence() const;
 +    virtual int32_t getEinkSleepOverlaySequence() const;
 +    virtual status_t submitEinkSleepOverlay(int fd, int32_t width, int32_t height,
@@ -1980,16 +2043,17 @@ index acfad46526bc3e5cede75b1a0820b6d5730d22d9..be662212c43a96c7e65f69591cb80b20
      virtual status_t getDisplayColorModes(const sp<IBinder>& display,
              Vector<android_color_mode_t>* configs);
      virtual android_color_mode_t getActiveColorMode(const sp<IBinder>& display);
-@@ -714,6 +721,7 @@ private:
+@@ -714,6 +723,8 @@ private:
      std::queue<CompositePresentTime> mCompositePresentTimes;
  
      std::atomic<bool> mRefreshPending{false};
 +    std::atomic<int32_t> mEinkSleepOverlaySequence{0};
++    std::atomic<uint32_t> mEinkSleepOverlayEpoch{0};
  
      /* ------------------------------------------------------------------------
       * Feature prototyping
 diff --git a/services/surfaceflinger/SurfaceFlinger_hwc1.cpp b/services/surfaceflinger/SurfaceFlinger_hwc1.cpp
-index 247d80bc0755391f90381983238c2c4cea12182f..d7c45825b0e9750d82844fbeec845eaf3db96c32 100644
+index 247d80bc0755391f90381983238c2c4cea12182f..1de065b6597cd873c8800c6112a094f166aab95c 100644
 --- a/services/surfaceflinger/SurfaceFlinger_hwc1.cpp
 +++ b/services/surfaceflinger/SurfaceFlinger_hwc1.cpp
 @@ -23,6 +23,7 @@
@@ -2013,10 +2077,69 @@ index 247d80bc0755391f90381983238c2c4cea12182f..d7c45825b0e9750d82844fbeec845eaf
      char value[PROPERTY_VALUE_MAX];
  
      property_get("ro.bq.gpu_to_cpu_unsupported", value, "0");
-@@ -775,6 +782,55 @@ int SurfaceFlinger::getActiveConfig(const sp<IBinder>& display) {
+@@ -775,6 +782,122 @@ int SurfaceFlinger::getActiveConfig(const sp<IBinder>& display) {
      return BAD_VALUE;
  }
  
++status_t SurfaceFlinger::cancelEinkSleepOverlay() {
++    const uid_t uid = IPCThreadState::self()->getCallingUid();
++    if (uid != 0 && uid != AID_SYSTEM)
++        return PERMISSION_DENIED;
++    // Invalidate already queued work before waiting on the SF thread.
++    mEinkSleepOverlayEpoch.fetch_add(1, std::memory_order_acq_rel);
++    mEinkSleepOverlaySequence.store(0, std::memory_order_release);
++    status_t result = NO_INIT;
++    sp<MessageBase> msg = new LambdaMessage([this, &result] {
++        result = getHwComposer().cancelEinkSleepOverlay();
++        if (result > 0)
++            repaintEverything();
++    });
++    const status_t posted = postMessageSync(msg);
++    return posted == NO_ERROR ? (result >= 0 ? NO_ERROR : result) : posted;
++}
++
++status_t SurfaceFlinger::requestEinkWakeRefresh() {
++    const uid_t uid = IPCThreadState::self()->getCallingUid();
++    // SystemUI uses android.uid.systemui, not AID_SYSTEM. Authorize its
++    // existing signature permission instead of assuming a fixed app UID.
++    if (uid != 0 && uid != AID_SYSTEM &&
++            !PermissionCache::checkCallingPermission(
++                    String16("android.permission.STATUS_BAR_SERVICE")))
++        return PERMISSION_DENIED;
++    mEinkSleepOverlayEpoch.fetch_add(1, std::memory_order_acq_rel);
++    mEinkSleepOverlaySequence.store(0, std::memory_order_release);
++
++    // Old vendor images reject CANCEL with EINVAL. Do not arm a physical
++    // refresh (and invalidate the next sleep base) when latch release fails.
++    status_t result = NO_INIT;
++    sp<MessageBase> cancel = new LambdaMessage([this, &result] {
++        result = getHwComposer().cancelEinkSleepOverlay();
++    });
++    const status_t cancelled = postMessageSync(cancel);
++    if (cancelled != NO_ERROR)
++        return cancelled;
++    if (result < 0) {
++        ALOGE("RIDI_WAKE vendor HWC cancel failed result=%d; "
++                "refresh not armed (update vendor with system)", result);
++        return result;
++    }
++
++    // Do not set properties on the compositor thread: init can be waiting on
++    // SurfaceFlinger. Arm the existing one-shot gralloc sequence on this
++    // Binder thread BEFORE explicitly scheduling the live frame.
++    const int32_t serial = property_get_int32("sys.ridi.epd.full_refresh_seq", 0);
++    const int32_t next = serial < 0 || serial == INT32_MAX ? 1 : serial + 1;
++    char value[PROPERTY_VALUE_MAX];
++    snprintf(value, sizeof(value), "%d", next);
++    if (property_set("sys.ridi.epd.full_refresh_seq", value) != 0)
++        return UNKNOWN_ERROR;
++
++    // A hidden status bar or a static fullscreen reader may not invalidate
++    // any View at wake. Force ONE compositor repaint, not a timed View loop.
++    sp<MessageBase> msg = new LambdaMessage([this] { repaintEverything(); });
++    return postMessageSync(msg);
++}
++
 +int32_t SurfaceFlinger::getEinkSleepSubmitSequence() const {
 +    return getHwComposer().getEinkSleepSubmitSequence();
 +}
@@ -2033,6 +2156,7 @@ index 247d80bc0755391f90381983238c2c4cea12182f..d7c45825b0e9750d82844fbeec845eaf
 +            || sequence <= 0) {
 +        return BAD_VALUE;
 +    }
++    const uint32_t epoch = mEinkSleepOverlayEpoch.load(std::memory_order_acquire);
 +    const int ownedFd = dup(fd);
 +    if (ownedFd < 0) {
 +        return -errno;
@@ -2048,7 +2172,14 @@ index 247d80bc0755391f90381983238c2c4cea12182f..d7c45825b0e9750d82844fbeec845eaf
 +    status_t overlayResult = NO_INIT;
 +    sp<MessageBase> msg = new LambdaMessage([this, ownedFd, width, height,
 +            strideBytes, alphaLeft, alphaTop, alphaRight, alphaBottom, dstLeft,
-+            dstTop, sequence, &overlayResult] {
++            dstTop, sequence, epoch, &overlayResult] {
++        if (epoch != mEinkSleepOverlayEpoch.load(std::memory_order_acquire)) {
++            overlayResult = -ECANCELED;
++            int32_t expected = sequence;
++            mEinkSleepOverlaySequence.compare_exchange_strong(expected, 0,
++                    std::memory_order_acq_rel);
++            return;
++        }
 +        // This is the final panel operation before blank. It deliberately
 +        // covers SystemUI as-is; the sleep path must not synthesize a separate
 +        // navigation-bar removal composition first.
@@ -2069,7 +2200,7 @@ index 247d80bc0755391f90381983238c2c4cea12182f..d7c45825b0e9750d82844fbeec845eaf
  void SurfaceFlinger::setActiveConfigInternal(const sp<DisplayDevice>& hw, int mode) {
      ALOGD("Set active config mode=%d, type=%d flinger=%p", mode, hw->getDisplayType(),
            this);
-@@ -1499,6 +1555,26 @@ void SurfaceFlinger::doComposition() {
+@@ -1499,6 +1622,26 @@ void SurfaceFlinger::doComposition() {
              // transform the dirty region into this screen's coordinate space
              const Region dirtyRegion(hw->getDirtyRegion(repaintEverything));
  
@@ -2096,7 +2227,7 @@ index 247d80bc0755391f90381983238c2c4cea12182f..d7c45825b0e9750d82844fbeec845eaf
              // repaint the framebuffer (if needed)
              doDisplayComposition(hw, dirtyRegion);
  
-@@ -2138,10 +2214,22 @@ void SurfaceFlinger::doDisplayComposition(const sp<const DisplayDevice>& hw,
+@@ -2138,10 +2281,22 @@ void SurfaceFlinger::doDisplayComposition(const sp<const DisplayDevice>& hw,
      hw->swapRegion.orSelf(dirtyRegion);
  
      uint32_t flags = hw->getFlags();
@@ -2123,7 +2254,7 @@ index 247d80bc0755391f90381983238c2c4cea12182f..d7c45825b0e9750d82844fbeec845eaf
          dirtyRegion.set(hw->swapRegion.bounds());
      } else {
          if (flags & DisplayDevice::PARTIAL_UPDATES) {
-@@ -2308,7 +2396,14 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<const DisplayDevice>& hw, const
+@@ -2308,7 +2463,14 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<const DisplayDevice>& hw, const
  void SurfaceFlinger::drawWormhole(const sp<const DisplayDevice>& hw, const Region& region) const {
      const int32_t height = hw->getHeight();
      RenderEngine& engine(getRenderEngine());
@@ -2139,7 +2270,7 @@ index 247d80bc0755391f90381983238c2c4cea12182f..d7c45825b0e9750d82844fbeec845eaf
  }
  
  status_t SurfaceFlinger::addClientLayer(const sp<Client>& client,
-@@ -3947,7 +4042,8 @@ status_t SurfaceFlinger::captureScreenImplLocked(
+@@ -3947,7 +4109,8 @@ status_t SurfaceFlinger::captureScreenImplLocked(
                      // this binds the given EGLImage as a framebuffer for the
                      // duration of this scope.
                      RenderEngine::BindImageAsFramebuffer imageBond(getRenderEngine(), image);

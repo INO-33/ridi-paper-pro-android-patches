@@ -201,6 +201,20 @@ index a2fb9db8c64bb454141a9973274838b00aa14838..f57dd4300a992e6cd6be27efbb86ee7c
  
      /**
       * Whether this build was for an emulator device.
+diff --git a/core/java/android/os/PowerManager.java b/core/java/android/os/PowerManager.java
+index a85ed9c0ce346d07f119b6d621ed93919cd340d7..94434f096923ab47d05467388ee00aee4ad5d779 100644
+--- a/core/java/android/os/PowerManager.java
++++ b/core/java/android/os/PowerManager.java
+@@ -435,6 +435,9 @@ public final class PowerManager {
+      */
+     public static final String SHUTDOWN_USER_REQUESTED = "userrequested";
+ 
++    /** Battery depleted automatic shutdown; not a user or thermal shutdown. @hide */
++    public static final String SHUTDOWN_LOW_BATTERY = "battery";
++
+     /**
+      * @hide
+      */
 diff --git a/core/java/android/view/RidiPageScroll.java b/core/java/android/view/RidiPageScroll.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..f912ddbe40e65c8b8f58f9943929f87c44246a5c
@@ -460,7 +474,7 @@ index 4f9dbd5ad7a09e16b7c723e4febde8ee62f5777f..be6fa2d3f3e7ffb98cd24d0e83565453
       * Returns true if the consumer of this Surface is running behind the producer.
       *
 diff --git a/core/java/android/view/SurfaceControl.java b/core/java/android/view/SurfaceControl.java
-index 1a2968f6345f49deab0a9ddd7d877deeb508d1f6..1bffb9bdb8946b842bc3039c3b0d9a9163cb202d 100644
+index 1a2968f6345f49deab0a9ddd7d877deeb508d1f6..a85a36ddacdf74839ceaa1b282d8d93bdbd39fe9 100644
 --- a/core/java/android/view/SurfaceControl.java
 +++ b/core/java/android/view/SurfaceControl.java
 @@ -29,6 +29,8 @@ import android.view.Surface.OutOfResourcesException;
@@ -472,10 +486,12 @@ index 1a2968f6345f49deab0a9ddd7d877deeb508d1f6..1bffb9bdb8946b842bc3039c3b0d9a91
  /**
   * SurfaceControl
   *  @hide
-@@ -92,6 +94,11 @@ public class SurfaceControl {
+@@ -92,6 +94,13 @@ public class SurfaceControl {
      private static native SurfaceControl.PhysicalDisplayInfo[] nativeGetDisplayConfigs(
              IBinder displayToken);
      private static native int nativeGetActiveConfig(IBinder displayToken);
++    private static native int nativeCancelEinkSleepOverlay();
++    private static native int nativeRequestEinkWakeRefresh();
 +    private static native int nativeGetEinkSleepSubmitSequence();
 +    private static native int nativeGetEinkSleepOverlaySequence();
 +    private static native int nativeSubmitEinkSleepOverlay(FileDescriptor fd,
@@ -484,10 +500,20 @@ index 1a2968f6345f49deab0a9ddd7d877deeb508d1f6..1bffb9bdb8946b842bc3039c3b0d9a91
      private static native boolean nativeSetActiveConfig(IBinder displayToken, int id);
      private static native int[] nativeGetDisplayColorModes(IBinder displayToken);
      private static native int nativeGetActiveColorMode(IBinder displayToken);
-@@ -693,6 +700,28 @@ public class SurfaceControl {
+@@ -693,6 +702,38 @@ public class SurfaceControl {
          return nativeGetActiveConfig(displayToken);
      }
  
++    /** Releases the one-shot sleep overlay on failure or wake. @hide */
++    public static int cancelEinkSleepOverlay() {
++        return nativeCancelEinkSleepOverlay();
++    }
++
++    /** Requests one panel-wide GC16 and a frame after leaving the sleep image. @hide */
++    public static int requestEinkWakeRefresh() {
++        return nativeRequestEinkWakeRefresh();
++    }
++
 +    /** Last reader sleep generation accepted by MXCFB_SEND_UPDATE. @hide */
 +    public static int getEinkSleepSubmitSequence() {
 +        return nativeGetEinkSleepSubmitSequence();
@@ -1774,6 +1800,117 @@ index 357c9c36936bdf99c674e71034ad47946738926f..39a9f740e03298658243faa31d4e30c8
          // Continue a scroll or fling in progress
          if (mFlywheel && !mFinished) {
              float oldVel = getCurrVelocity();
+diff --git a/core/java/com/android/internal/app/ResolverActivity.java b/core/java/com/android/internal/app/ResolverActivity.java
+index 5c1bafdbca3f96a6325f0a43a3bb41ad1bdf94bb..864e03026d8b81b57735c143f96b647325a4284f 100644
+--- a/core/java/com/android/internal/app/ResolverActivity.java
++++ b/core/java/com/android/internal/app/ResolverActivity.java
+@@ -55,6 +55,7 @@ import android.util.Slog;
+ import android.view.LayoutInflater;
+ import android.view.View;
+ import android.view.ViewGroup;
++import android.view.WindowManager;
+ import android.widget.AbsListView;
+ import android.widget.AdapterView;
+ import android.widget.BaseAdapter;
+@@ -248,8 +249,15 @@ public class ResolverActivity extends Activity {
+     protected void onCreate(Bundle savedInstanceState, Intent intent,
+             CharSequence title, int defaultTitleRes, Intent[] initialIntents,
+             List<ResolveInfo> rList, boolean supportsAlwaysUseOption) {
+-        setTheme(R.style.Theme_DeviceDefault_Resolver);
++        final boolean ridiDialog = isRidiResolverDialog();
++        setTheme(ridiDialog ? R.style.Theme_DeviceDefault_RidiResolver
++                : R.style.Theme_DeviceDefault_Resolver);
+         super.onCreate(savedInstanceState);
++        if (ridiDialog) {
++            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
++            getWindow().setDimAmount(0f);
++            getWindow().setWindowAnimations(0);
++        }
+ 
+         // Determine whether we should show that intent is forwarded
+         // from managed profile to owner or other way around.
+@@ -901,7 +909,25 @@ public class ResolverActivity extends Activity {
+         } else {
+             mLayoutId = getLayoutResource();
+         }
++        if (isRidiResolverDialog()) {
++            if (mLayoutId == R.layout.resolver_list) {
++                mLayoutId = R.layout.ridi_resolver_list;
++            } else if (mLayoutId == R.layout.resolver_list_with_default) {
++                mLayoutId = R.layout.ridi_resolver_list_with_default;
++            }
++        }
+         setContentView(mLayoutId);
++        if (isRidiResolverDialog()) {
++            getWindow().getDecorView().setElevation(0f);
++            final ListView list = findViewById(R.id.resolver_list);
++            if (list != null) {
++                // Keep actions visible on small or landscape displays.
++                final ViewGroup.LayoutParams params = list.getLayoutParams();
++                params.height = Math.min((int) (240 * getResources().getDisplayMetrics().density),
++                        (int) (getResources().getDisplayMetrics().heightPixels * 0.4f));
++                list.setLayoutParams(params);
++            }
++        }
+ 
+         int count = mAdapter.getUnfilteredCount();
+ 
+@@ -952,8 +978,12 @@ public class ResolverActivity extends Activity {
+         // In case this method is called again (due to activity recreation), avoid adding a new
+         // header if one is already present.
+         if (useHeader && listView != null && listView.getHeaderViewsCount() == 0) {
+-            listView.addHeaderView(LayoutInflater.from(this).inflate(
+-                    R.layout.resolver_different_item_header, listView, false));
++            final View header = LayoutInflater.from(this).inflate(
++                    R.layout.resolver_different_item_header, listView, false);
++            if (isRidiResolverDialog()) {
++                header.setElevation(0f);
++            }
++            listView.addHeaderView(header);
+         }
+     }
+ 
+@@ -1028,6 +1058,10 @@ public class ResolverActivity extends Activity {
+         }
+     }
+ 
++    private boolean isRidiResolverDialog() {
++        return getResources().getBoolean(R.bool.config_ridiEinkDialogStyle);
++    }
++
+     private boolean useLayoutWithDefault() {
+         return mSupportsAlwaysUseOption && mAdapter.hasFilteredItem();
+     }
+diff --git a/core/java/com/android/internal/app/ShutdownActivity.java b/core/java/com/android/internal/app/ShutdownActivity.java
+index 745d28f367a38b68ae6c35b4b5709cccff676ca9..e8b7a2741b7ec3d4332e3bc967c31fe6b67c172a 100644
+--- a/core/java/com/android/internal/app/ShutdownActivity.java
++++ b/core/java/com/android/internal/app/ShutdownActivity.java
+@@ -32,6 +32,7 @@ public class ShutdownActivity extends Activity {
+     private boolean mReboot;
+     private boolean mConfirm;
+     private boolean mUserRequested;
++    private String mReason;
+ 
+     @Override
+     protected void onCreate(Bundle savedInstanceState) {
+@@ -41,6 +42,8 @@ public class ShutdownActivity extends Activity {
+         mReboot = Intent.ACTION_REBOOT.equals(intent.getAction());
+         mConfirm = intent.getBooleanExtra(Intent.EXTRA_KEY_CONFIRM, false);
+         mUserRequested = intent.getBooleanExtra(Intent.EXTRA_USER_REQUESTED_SHUTDOWN, false);
++        mReason = mUserRequested ? PowerManager.SHUTDOWN_USER_REQUESTED
++                : intent.getStringExtra(Intent.EXTRA_REASON);
+         Slog.i(TAG, "onCreate(): confirm=" + mConfirm);
+ 
+         Thread thr = new Thread("ShutdownActivity") {
+@@ -53,7 +56,7 @@ public class ShutdownActivity extends Activity {
+                         pm.reboot(mConfirm, null, false);
+                     } else {
+                         pm.shutdown(mConfirm,
+-                                    mUserRequested ? PowerManager.SHUTDOWN_USER_REQUESTED : null,
++                                    mReason,
+                                     false);
+                     }
+                 } catch (RemoteException e) {
 diff --git a/core/java/com/android/internal/policy/PhoneWindow.java b/core/java/com/android/internal/policy/PhoneWindow.java
 index 544afd993b37499ef4e860a76db8f08f4ce6cd27..bef91556244fd80319dc921c5d26dfd0ca517e0a 100644
 --- a/core/java/com/android/internal/policy/PhoneWindow.java
@@ -1825,13 +1962,21 @@ index 494e266dabcd1eb8ae403800909c3c8fa3911311..342def03c78362dad4a67b6165575215
      {"nativeAttachAndQueueBuffer", "(JLandroid/graphics/GraphicBuffer;)I", (void*)nativeAttachAndQueueBuffer},
  
 diff --git a/core/jni/android_view_SurfaceControl.cpp b/core/jni/android_view_SurfaceControl.cpp
-index 97aa562823e0d3531922b5f2f22ad99e48fa424c..1217ed1c9bd1ab96cdd70151b6cfaef42c020ec6 100644
+index 97aa562823e0d3531922b5f2f22ad99e48fa424c..153d54bb8b6cfaba78b861cc195e0419356cc33e 100644
 --- a/core/jni/android_view_SurfaceControl.cpp
 +++ b/core/jni/android_view_SurfaceControl.cpp
-@@ -513,6 +513,26 @@ static jint nativeGetActiveConfig(JNIEnv* env, jclass clazz, jobject tokenObj) {
+@@ -513,6 +513,34 @@ static jint nativeGetActiveConfig(JNIEnv* env, jclass clazz, jobject tokenObj) {
      return static_cast<jint>(SurfaceComposerClient::getActiveConfig(token));
  }
  
++static jint nativeCancelEinkSleepOverlay(JNIEnv*, jclass) {
++    return SurfaceComposerClient::cancelEinkSleepOverlay();
++}
++
++static jint nativeRequestEinkWakeRefresh(JNIEnv*, jclass) {
++    return SurfaceComposerClient::requestEinkWakeRefresh();
++}
++
 +static jint nativeGetEinkSleepSubmitSequence(JNIEnv*, jclass) {
 +    return static_cast<jint>(SurfaceComposerClient::getEinkSleepSubmitSequence());
 +}
@@ -1855,10 +2000,14 @@ index 97aa562823e0d3531922b5f2f22ad99e48fa424c..1217ed1c9bd1ab96cdd70151b6cfaef4
  static jboolean nativeSetActiveConfig(JNIEnv* env, jclass clazz, jobject tokenObj, jint id) {
      sp<IBinder> token(ibinderForJavaObject(env, tokenObj));
      if (token == NULL) return JNI_FALSE;
-@@ -831,6 +851,12 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
+@@ -831,6 +859,16 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
              (void*)nativeGetDisplayConfigs },
      {"nativeGetActiveConfig", "(Landroid/os/IBinder;)I",
              (void*)nativeGetActiveConfig },
++    {"nativeCancelEinkSleepOverlay", "()I",
++            (void*)nativeCancelEinkSleepOverlay },
++    {"nativeRequestEinkWakeRefresh", "()I",
++            (void*)nativeRequestEinkWakeRefresh },
 +    {"nativeGetEinkSleepSubmitSequence", "()I",
 +            (void*)nativeGetEinkSleepSubmitSequence },
 +    {"nativeGetEinkSleepOverlaySequence", "()I",
@@ -1868,6 +2017,17 @@ index 97aa562823e0d3531922b5f2f22ad99e48fa424c..1217ed1c9bd1ab96cdd70151b6cfaef4
      {"nativeSetActiveConfig", "(Landroid/os/IBinder;I)Z",
              (void*)nativeSetActiveConfig },
      {"nativeGetDisplayColorModes", "(Landroid/os/IBinder;)[I",
+diff --git a/core/res/res/color/ridi_resolver_button_text.xml b/core/res/res/color/ridi_resolver_button_text.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..96a161f3e0d38d0abe8630881783598d18cbc68a
+--- /dev/null
++++ b/core/res/res/color/ridi_resolver_button_text.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<selector xmlns:android="http://schemas.android.com/apk/res/android">
++    <item android:state_enabled="false" android:color="#ff888888" />
++    <item android:color="#ff000000" />
++</selector>
 diff --git a/core/res/res/drawable/ridi_shutdown_confirmation_button.xml b/core/res/res/drawable/ridi_shutdown_confirmation_button.xml
 new file mode 100644
 index 0000000000000000000000000000000000000000..b7ff33878335c9f6c7cd8885e0d062f61f0c6a16
@@ -1900,6 +2060,51 @@ index 0000000000000000000000000000000000000000..e3e504abe24683b51fcf9a46456e541c
 +    <stroke android:width="2.5dp" android:color="#ff222222" />
 +    <corners android:radius="4dp" />
 +</shape>
+diff --git a/core/res/res/layout/ridi_resolver_list.xml b/core/res/res/layout/ridi_resolver_list.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..56cfce997908634c6417519d0630cd627ee507db
+--- /dev/null
++++ b/core/res/res/layout/ridi_resolver_list.xml
+@@ -0,0 +1,13 @@
++<?xml version='1.0' encoding='utf-8'?>
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="14dp">
++    <RelativeLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@color/white">
++        <TextView android:id="@+id/profile_button" android:layout_width="wrap_content" android:layout_height="48dp" android:layout_marginEnd="8dp" android:paddingStart="8dp" android:paddingEnd="8dp" android:visibility="gone" style="?attr/borderlessButtonStyle" android:textAppearance="?attr/textAppearanceButton" android:textColor="?attr/colorAccent" android:gravity="center_vertical" android:layout_alignParentTop="true" android:layout_alignParentEnd="true" android:singleLine="true" />
++        <TextView android:id="@+id/title" android:layout_width="wrap_content" android:layout_height="wrap_content" android:minHeight="56dp" android:textAppearance="?attr/textAppearanceMedium" android:gravity="start|center_vertical" android:paddingStart="?attr/dialogPreferredPadding" android:paddingEnd="?attr/dialogPreferredPadding" android:paddingTop="8dp" android:layout_below="@id/profile_button" android:layout_alignParentStart="true" android:paddingBottom="8dp" android:textStyle="bold" android:textColor="#ff000000" android:textSize="22sp" />
++    </RelativeLayout>
++    <ListView android:layout_width="match_parent" android:layout_height="240dp" android:id="@+id/resolver_list" android:clipToPadding="false" android:scrollbarStyle="outsideOverlay" android:background="@color/white" android:nestedScrollingEnabled="true" android:scrollIndicators="none" android:divider="@null" android:overScrollMode="never" android:listSelector="@drawable/ridi_shutdown_confirmation_button" />
++    <TextView android:id="@+id/empty" android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@color/white" android:text="@string/noApplications" android:padding="32dp" android:gravity="center" android:visibility="gone" />
++    <LinearLayout android:id="@+id/button_bar" android:visibility="gone" style="?attr/buttonBarStyle" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="end|center_vertical" android:orientation="horizontal" android:layoutDirection="locale" android:measureWithLargestChild="true" android:background="@color/white" android:paddingTop="8dp" android:paddingBottom="8dp" android:paddingStart="12dp" android:paddingEnd="12dp">
++        <Button android:id="@+id/button_once" android:layout_width="wrap_content" android:layout_gravity="start" android:maxLines="2" style="?attr/buttonBarNegativeButtonStyle" android:minHeight="@dimen/alert_dialog_button_bar_height" android:layout_height="wrap_content" android:enabled="false" android:text="@string/activity_resolver_use_once" android:onClick="onButtonClick" android:background="@drawable/ridi_shutdown_confirmation_button" android:stateListAnimator="@null" android:textAllCaps="false" android:textColor="@color/ridi_resolver_button_text" />
++        <Button android:id="@+id/button_always" android:layout_width="wrap_content" android:layout_gravity="end" android:maxLines="2" android:minHeight="@dimen/alert_dialog_button_bar_height" style="?attr/buttonBarPositiveButtonStyle" android:layout_height="wrap_content" android:enabled="false" android:text="@string/activity_resolver_use_always" android:onClick="onButtonClick" android:background="@drawable/ridi_shutdown_confirmation_button" android:stateListAnimator="@null" android:textAllCaps="false" android:textColor="@color/ridi_resolver_button_text" android:textStyle="bold" />
++    </LinearLayout>
++</LinearLayout>
+\ No newline at end of file
+diff --git a/core/res/res/layout/ridi_resolver_list_with_default.xml b/core/res/res/layout/ridi_resolver_list_with_default.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..42359f55d355b277111b7fa4e6506152821924ac
+--- /dev/null
++++ b/core/res/res/layout/ridi_resolver_list_with_default.xml
+@@ -0,0 +1,18 @@
++<?xml version='1.0' encoding='utf-8'?>
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="14dp">
++    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:background="@color/white">
++        <LinearLayout android:layout_width="match_parent" android:layout_height="64dp" android:orientation="horizontal">
++            <ImageView android:id="@+id/icon" android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="start|top" android:layout_marginStart="16dp" android:layout_marginEnd="16dp" android:layout_marginTop="20dp" android:src="@drawable/resolver_icon_placeholder" android:scaleType="fitCenter" />
++            <TextView android:id="@+id/title" android:layout_width="0dp" android:layout_weight="1" android:layout_height="?attr/listPreferredItemHeight" android:layout_marginStart="16dp" android:textAppearance="?attr/textAppearanceMedium" android:gravity="start|center_vertical" android:paddingEnd="16dp" android:textStyle="bold" android:textColor="#ff000000" android:textSize="22sp" />
++            <LinearLayout android:id="@+id/profile_button" android:layout_width="wrap_content" android:layout_height="48dp" android:layout_marginTop="4dp" android:layout_marginEnd="4dp" android:paddingStart="8dp" android:paddingEnd="8dp" android:paddingTop="4dp" android:paddingBottom="4dp" android:focusable="true" android:visibility="gone" style="?attr/borderlessButtonStyle">
++                <ImageView android:id="@+id/icon" android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="start|center_vertical" android:layout_marginEnd="?attr/listPreferredItemPaddingEnd" android:layout_marginTop="12dp" android:layout_marginBottom="12dp" android:scaleType="fitCenter" />
++                <TextView android:id="@id/text1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="start|center_vertical" android:layout_marginEnd="?attr/listPreferredItemPaddingEnd" android:textAppearance="?attr/textAppearanceButton" android:textColor="?attr/textColorPrimary" android:minLines="1" android:maxLines="1" android:ellipsize="marquee" />
++            </LinearLayout>
++        </LinearLayout>
++        <LinearLayout android:id="@+id/button_bar" android:visibility="gone" style="?attr/buttonBarStyle" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="end|center_vertical" android:orientation="horizontal" android:layoutDirection="locale" android:measureWithLargestChild="true" android:paddingTop="8dp" android:paddingBottom="8dp" android:paddingStart="12dp" android:paddingEnd="12dp" android:background="@color/white">
++            <Button android:id="@+id/button_once" android:layout_width="wrap_content" android:layout_gravity="start" android:maxLines="2" style="?attr/buttonBarNegativeButtonStyle" android:minHeight="@dimen/alert_dialog_button_bar_height" android:layout_height="wrap_content" android:enabled="false" android:text="@string/activity_resolver_use_once" android:onClick="onButtonClick" android:background="@drawable/ridi_shutdown_confirmation_button" android:stateListAnimator="@null" android:textAllCaps="false" android:textColor="@color/ridi_resolver_button_text" />
++            <Button android:id="@+id/button_always" android:layout_width="wrap_content" android:layout_gravity="end" android:maxLines="2" android:minHeight="@dimen/alert_dialog_button_bar_height" style="?attr/buttonBarPositiveButtonStyle" android:layout_height="wrap_content" android:enabled="false" android:text="@string/activity_resolver_use_always" android:onClick="onButtonClick" android:background="@drawable/ridi_shutdown_confirmation_button" android:stateListAnimator="@null" android:textAllCaps="false" android:textColor="@color/ridi_resolver_button_text" android:textStyle="bold" />
++        </LinearLayout>
++    </LinearLayout>
++    <ListView android:layout_width="match_parent" android:layout_height="240dp" android:id="@+id/resolver_list" android:clipToPadding="false" android:scrollbarStyle="outsideOverlay" android:background="@color/white" android:nestedScrollingEnabled="true" android:divider="@null" android:overScrollMode="never" android:scrollIndicators="none" android:listSelector="@drawable/ridi_shutdown_confirmation_button" />
++</LinearLayout>
+\ No newline at end of file
 diff --git a/core/res/res/layout/ridi_shutdown_confirmation.xml b/core/res/res/layout/ridi_shutdown_confirmation.xml
 new file mode 100644
 index 0000000000000000000000000000000000000000..4d29826d4f70c2778d1cf939123396e1e5b55593
@@ -2014,6 +2219,27 @@ index d1b3fec451dbf65947d4d37436ad6f8583024780..4c5ee62a9c52e70d225d8d8e382677fe
 +    <bool name="config_ridiStockShutdownConfirmation">false</bool>
 +    <bool name="config_ridiEinkDialogStyle">false</bool>
  </resources>
+diff --git a/core/res/res/values/ridi_resolver_styles.xml b/core/res/res/values/ridi_resolver_styles.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..e297d829e590b253c074bb224e3c76793c0f59aa
+--- /dev/null
++++ b/core/res/res/values/ridi_resolver_styles.xml
+@@ -0,0 +1,15 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <style name="Theme.DeviceDefault.RidiResolver" parent="Theme.DeviceDefault.Light.Dialog.NoActionBar">
++        <item name="windowBackground">@drawable/ridi_shutdown_confirmation_panel</item>
++        <item name="windowElevation">0dp</item>
++        <item name="windowAnimationStyle">@null</item>
++        <item name="windowContentOverlay">@null</item>
++        <item name="backgroundDimEnabled">false</item>
++        <item name="backgroundDimAmount">0</item>
++        <item name="colorAccent">#ff000000</item>
++        <item name="textColorPrimary">#ff000000</item>
++        <item name="textColorSecondary">#ff666666</item>
++        <item name="textColorPrimaryDisableOnly">@color/ridi_resolver_button_text</item>
++    </style>
++</resources>
 diff --git a/core/res/res/values/ridi_shutdown_strings.xml b/core/res/res/values/ridi_shutdown_strings.xml
 new file mode 100644
 index 0000000000000000000000000000000000000000..60e96c1df9c4d3f866bcfec580592bf27bdde61a
@@ -2028,7 +2254,7 @@ index 0000000000000000000000000000000000000000..60e96c1df9c4d3f866bcfec580592bf2
 +    <string name="ridi_shutdown_confirm_accept">확인</string>
 +</resources>
 diff --git a/core/res/res/values/symbols.xml b/core/res/res/values/symbols.xml
-index 975737b71220f075ea6ac48ee1dc2b423ceac5b0..20dfca0db16753be1f256ec3764cbc7f3b8d0519 100644
+index 975737b71220f075ea6ac48ee1dc2b423ceac5b0..61386072b48f790ceb8680bb5c7a5d5f2cf66160 100644
 --- a/core/res/res/values/symbols.xml
 +++ b/core/res/res/values/symbols.xml
 @@ -2840,6 +2840,8 @@
@@ -2040,7 +2266,7 @@ index 975737b71220f075ea6ac48ee1dc2b423ceac5b0..20dfca0db16753be1f256ec3764cbc7f
  
    <!-- Whether allow 3rd party apps on internal storage. -->
    <java-symbol type="bool" name="config_allow3rdPartyAppOnInternal" />
-@@ -3059,4 +3061,9 @@
+@@ -3059,4 +3061,12 @@
    <java-symbol type="layout" name="shutdown_dialog" />
    <java-symbol type="dimen" name="chooser_service_spacing" />
    <java-symbol type="bool" name="config_showSysuiShutdown" />
@@ -2049,6 +2275,9 @@ index 975737b71220f075ea6ac48ee1dc2b423ceac5b0..20dfca0db16753be1f256ec3764cbc7f
 +  <java-symbol type="layout" name="ridi_shutdown_confirmation" />
 +  <java-symbol type="id" name="ridi_shutdown_confirm_cancel" />
 +  <java-symbol type="id" name="ridi_shutdown_confirm_accept" />
++  <java-symbol type="style" name="Theme.DeviceDefault.RidiResolver" />
++  <java-symbol type="layout" name="ridi_resolver_list" />
++  <java-symbol type="layout" name="ridi_resolver_list_with_default" />
  </resources>
 diff --git a/graphics/java/android/graphics/drawable/AnimatedRotateDrawable.java b/graphics/java/android/graphics/drawable/AnimatedRotateDrawable.java
 index d714ca830976e044ad436516798a2d72bd710702..60f9f1a0ee169a53e24dbbe12ba026ef6fcfcf6e 100644
@@ -2191,7 +2420,7 @@ index 06d00be8aee8dd30a36552a880d942c17602f7ac..47638c3826a9dcbdcfe90684b863cd2f
              loadSetting(stmt, Settings.Global.CDMA_CELL_BROADCAST_SMS,
                      RILConstants.CDMA_CELL_BROADCAST_SMS_DISABLED);
 diff --git a/packages/SystemUI/AndroidManifest.xml b/packages/SystemUI/AndroidManifest.xml
-index 47ffa5c5ff8292480f004aaec5324505ed0a7128..3388d213d3557802725a499495db2b235a964893 100644
+index 47ffa5c5ff8292480f004aaec5324505ed0a7128..00b10217601244f5909b8a71e0ffac18f85ca483 100644
 --- a/packages/SystemUI/AndroidManifest.xml
 +++ b/packages/SystemUI/AndroidManifest.xml
 @@ -72,6 +72,7 @@
@@ -2210,10 +2439,18 @@ index 47ffa5c5ff8292480f004aaec5324505ed0a7128..3388d213d3557802725a499495db2b23
      <uses-permission android:name="android.permission.STOP_APP_SWITCHES" />
      <uses-permission android:name="android.permission.SET_SCREEN_COMPATIBILITY" />
      <uses-permission android:name="android.permission.START_ANY_ACTIVITY" />
-@@ -223,6 +225,39 @@
+@@ -223,6 +225,47 @@
              android:exported="true"
              />
  
++        <activity android:name=".ridi.ReaderLowBatteryActivity"
++            android:exported="false"
++            android:permission="android.permission.STATUS_BAR_SERVICE"
++            android:excludeFromRecents="true"
++            android:launchMode="singleTask"
++            android:configChanges="orientation|screenSize|keyboardHidden"
++            android:theme="@android:style/Theme.Material.Light.NoActionBar.Fullscreen" />
++
 +        <activity
 +            android:name=".ridi.ReaderQuickPanelActivity"
 +            android:label="@string/ridi_quick_panel_title"
@@ -2365,6 +2602,123 @@ z4#!1`Qn(_kr)A1WRvVel6PqT*)J}AGEi&^&eJ*KMPu2iwVL$yZ%B6og|NU2$;EPQA
 zzeT|MXQuy8GV{5@^Ut-P8()OuKdfVZQCa`(^nv1wOClnh4}7`{@OxhVKfm-Rs88?t
 z-#PwjYT|#=K>w=NeNhwplY93snqKnP^_5@U&%a0pzq>XB@bRbrQ~qOZZ$I&OwbK8q
 el|ASbZX5vz)jOKpeE#VI**Oz)Nb%{*Km8pZ_Yv3t
+
+literal 0
+HcmV?d00001
+
+diff --git a/packages/SystemUI/res/drawable-nodpi/ridi_stock_poweroff_low_battery.png b/packages/SystemUI/res/drawable-nodpi/ridi_stock_poweroff_low_battery.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..109e4a881d02d7fe38b3c5a67da53d22dce00c32
+GIT binary patch
+literal 9772
+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
 
 literal 0
 HcmV?d00001
@@ -5089,10 +5443,10 @@ index 33d5617c039701722771a68db6931dd8736a6a07..0d150e2075453ace560a940ee8ee98cc
  
          @Override
 diff --git a/packages/SystemUI/src/com/android/systemui/globalactions/GlobalActionsImpl.java b/packages/SystemUI/src/com/android/systemui/globalactions/GlobalActionsImpl.java
-index 2cf230c8e12d99683b28e0db9584bcd7e90b3014..fbfca8494f018762e1eee9a160513dae2c13c736 100644
+index 2cf230c8e12d99683b28e0db9584bcd7e90b3014..a2bb0cb130ac16681ff8f6b4f2ad537dcd12ae2c 100644
 --- a/packages/SystemUI/src/com/android/systemui/globalactions/GlobalActionsImpl.java
 +++ b/packages/SystemUI/src/com/android/systemui/globalactions/GlobalActionsImpl.java
-@@ -15,32 +15,26 @@
+@@ -15,32 +15,30 @@
  package com.android.systemui.globalactions;
  
  import android.app.Dialog;
@@ -5100,6 +5454,10 @@ index 2cf230c8e12d99683b28e0db9584bcd7e90b3014..fbfca8494f018762e1eee9a160513dae
 -import android.app.WallpaperColors;
 -import android.app.WallpaperManager;
  import android.content.Context;
++import android.content.Intent;
++import android.os.SystemProperties;
++import android.os.UserHandle;
++import android.view.ViewTreeObserver;
  import android.graphics.Color;
 -import android.graphics.Point;
 +import android.graphics.drawable.ColorDrawable;
@@ -5131,7 +5489,7 @@ index 2cf230c8e12d99683b28e0db9584bcd7e90b3014..fbfca8494f018762e1eee9a160513dae
      private final Context mContext;
      private final KeyguardMonitor mKeyguardMonitor;
      private final DeviceProvisionedController mDeviceProvisionedController;
-@@ -54,6 +48,14 @@ public class GlobalActionsImpl implements GlobalActions {
+@@ -54,6 +52,14 @@ public class GlobalActionsImpl implements GlobalActions {
  
      @Override
      public void showGlobalActions(GlobalActionsManager manager) {
@@ -5146,7 +5504,7 @@ index 2cf230c8e12d99683b28e0db9584bcd7e90b3014..fbfca8494f018762e1eee9a160513dae
          if (mGlobalActions == null) {
              mGlobalActions = new GlobalActionsDialog(mContext, manager);
          }
-@@ -63,8 +65,15 @@ public class GlobalActionsImpl implements GlobalActions {
+@@ -63,8 +69,15 @@ public class GlobalActionsImpl implements GlobalActions {
  
      @Override
      public void showShutdownUi(boolean isReboot, String reason) {
@@ -5164,7 +5522,7 @@ index 2cf230c8e12d99683b28e0db9584bcd7e90b3014..fbfca8494f018762e1eee9a160513dae
  
          Dialog d = new Dialog(mContext,
                  com.android.systemui.R.style.Theme_SystemUI_Dialog_GlobalActions);
-@@ -72,7 +81,11 @@ public class GlobalActionsImpl implements GlobalActions {
+@@ -72,7 +85,11 @@ public class GlobalActionsImpl implements GlobalActions {
          Window window = d.getWindow();
          window.getAttributes().width = ViewGroup.LayoutParams.MATCH_PARENT;
          window.getAttributes().height = ViewGroup.LayoutParams.MATCH_PARENT;
@@ -5177,7 +5535,7 @@ index 2cf230c8e12d99683b28e0db9584bcd7e90b3014..fbfca8494f018762e1eee9a160513dae
          window.requestFeature(Window.FEATURE_NO_TITLE);
          window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND
                  | WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR);
-@@ -81,30 +94,59 @@ public class GlobalActionsImpl implements GlobalActions {
+@@ -81,30 +98,86 @@ public class GlobalActionsImpl implements GlobalActions {
                          | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                          | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                          | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
@@ -5216,6 +5574,7 @@ index 2cf230c8e12d99683b28e0db9584bcd7e90b3014..fbfca8494f018762e1eee9a160513dae
 +            // Set the E Ink mode before the first traversal so the final frame
 +            // is submitted as one clean full-panel update, not a partial pass.
 +            ReaderEinkRefresh.fullRefresh(poweroff);
++            reportPowerOffDraw(poweroff);
 +        }
  
 -        Point displaySize = new Point();
@@ -5254,6 +5613,32 @@ index 2cf230c8e12d99683b28e0db9584bcd7e90b3014..fbfca8494f018762e1eee9a160513dae
 +            poweroff.post(() -> ReaderEinkRefresh.fullRefresh(poweroff));
 +        }
      }
++
++    private void reportPowerOffDraw(final View image) {
++        final String token = SystemProperties.get("sys.ridi.shutdown_token", "");
++        if (token.isEmpty()) return;
++        image.getViewTreeObserver().addOnDrawListener(new ViewTreeObserver.OnDrawListener() {
++            private boolean mPosted;
++            @Override public void onDraw() {
++                if (mPosted || image.getWidth() <= 0 || image.getHeight() <= 0) return;
++                mPosted = true;
++                // post runs after this traversal; stock leaves a further 500ms.
++                image.post(() -> {
++                    if (image.getViewTreeObserver().isAlive()) {
++                        image.getViewTreeObserver().removeOnDrawListener(this);
++                    }
++                });
++                image.postDelayed(() -> {
++                    Intent reply = new Intent("com.ridi.intent.action.POWER_OFF_DRAWN")
++                            .setPackage("android");
++                    reply.putExtra("ridi_shutdown_token", token);
++                    mContext.sendBroadcastAsUser(reply, UserHandle.SYSTEM,
++                            android.Manifest.permission.SHUTDOWN);
++                }, 500);
++            }
++        });
++    }
++
  }
 diff --git a/packages/SystemUI/src/com/android/systemui/qs/tiles/WifiTile.java b/packages/SystemUI/src/com/android/systemui/qs/tiles/WifiTile.java
 index 136cf216f65307afc63535cf7cc7c5dfda149d1c..8c40a7fc484603c6d85bd1cac0b6a51270beae33 100644
@@ -5618,6 +6003,88 @@ index 0000000000000000000000000000000000000000..215f5d45bb03d2dbaa893884433aed54
 +            this.maxColor = maxColor;
 +        }
 +    }
++}
+diff --git a/packages/SystemUI/src/com/android/systemui/ridi/ReaderLowBatteryActivity.java b/packages/SystemUI/src/com/android/systemui/ridi/ReaderLowBatteryActivity.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..514c0700a44054d0d81c69e9c921f2329b67e0eb
+--- /dev/null
++++ b/packages/SystemUI/src/com/android/systemui/ridi/ReaderLowBatteryActivity.java
+@@ -0,0 +1,76 @@
++package com.android.systemui.ridi;
++
++import android.app.Activity;
++import android.content.Intent;
++import android.graphics.Canvas;
++import android.graphics.Color;
++import android.os.Bundle;
++import android.os.SystemProperties;
++import android.os.UserHandle;
++import android.view.View;
++import android.view.Window;
++import android.view.WindowManager;
++import android.widget.ImageView;
++
++import com.android.systemui.R;
++import com.android.systemui.SystemUIApplication;
++import com.android.systemui.statusbar.phone.StatusBar;
++
++/** Stock MsgPowerOffActivity route: one image, draw reply, then framework off. */
++public final class ReaderLowBatteryActivity extends Activity {
++    private static final String DRAWN = "com.ridi.intent.action.POWER_OFF_DRAWN";
++    private static final String TOKEN = "ridi_shutdown_token";
++    private boolean mAcknowledgementPosted;
++
++    @Override protected void onCreate(Bundle state) {
++        super.onCreate(state);
++        if (!"1".equals(SystemProperties.get("sys.ridi.shutdown"))
++                || getIntent().getStringExtra(TOKEN) == null) {
++            finish();
++            return;
++        }
++        overridePendingTransition(0, 0);
++        if (getApplication() instanceof SystemUIApplication) {
++            StatusBar bar = ((SystemUIApplication) getApplication()).getComponent(StatusBar.class);
++            if (bar != null) bar.removeNavigationBarForShutdown();
++        }
++        Window window = getWindow();
++        window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
++        window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
++                | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
++                | WindowManager.LayoutParams.FLAG_FULLSCREEN
++                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
++        window.setWindowAnimations(0);
++        WindowManager.LayoutParams attrs = window.getAttributes();
++        attrs.screenBrightness = 0; // panel display does not need the frontlight
++        window.setAttributes(attrs);
++        window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
++                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
++                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
++        ImageView image = new ImageView(this) {
++            @Override protected void onDraw(Canvas canvas) {
++                super.onDraw(canvas);
++                if (!mAcknowledgementPosted && getWidth() > 0 && getHeight() > 0) {
++                    mAcknowledgementPosted = true;
++                    // Stock leaves 500ms after draw before replying. This is
++                    // an app-frame acknowledgement, not an EPDC hardware WAIT.
++                    postDelayed(() -> {
++                        Intent reply = new Intent(DRAWN).setPackage("android");
++                        reply.putExtra(TOKEN, getIntent().getStringExtra(TOKEN));
++                        sendBroadcastAsUser(reply, UserHandle.SYSTEM,
++                                android.Manifest.permission.SHUTDOWN);
++                    }, 500);
++                }
++            }
++        };
++        image.setBackgroundColor(Color.WHITE);
++        image.setScaleType(ImageView.ScaleType.FIT_XY);
++        // This activity is exclusively the depleted-battery path. Normal
++        // user-requested shutdown retains its existing confirmation and image.
++        image.setImageResource(R.drawable.ridi_stock_poweroff_low_battery);
++        ReaderEinkRefresh.fullRefresh(image);
++        setContentView(image);
++    }
++
++    @Override public void onBackPressed() { /* shutdown cannot be cancelled */ }
 +}
 diff --git a/packages/SystemUI/src/com/android/systemui/ridi/ReaderNotificationPanelActivity.java b/packages/SystemUI/src/com/android/systemui/ridi/ReaderNotificationPanelActivity.java
 new file mode 100644
@@ -6449,10 +6916,10 @@ index 0000000000000000000000000000000000000000..aa8a80565f13ab839a5ab84b8f10344e
 +}
 diff --git a/packages/SystemUI/src/com/android/systemui/ridi/ReaderScreensaverController.java b/packages/SystemUI/src/com/android/systemui/ridi/ReaderScreensaverController.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..ba9e3934b69c7100366b4cf583e54d6ffac2023c
+index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b550516865
 --- /dev/null
 +++ b/packages/SystemUI/src/com/android/systemui/ridi/ReaderScreensaverController.java
-@@ -0,0 +1,659 @@
+@@ -0,0 +1,671 @@
 +/*
 + * Copyright (C) 2026 E70Q10 Android port
 + *
@@ -6473,7 +6940,6 @@ index 0000000000000000000000000000000000000000..ba9e3934b69c7100366b4cf583e54d6f
 +import android.os.MemoryFile;
 +import android.os.Process;
 +import android.os.SystemClock;
-+import android.os.SystemProperties;
 +import android.os.Trace;
 +import android.os.UserHandle;
 +import android.provider.Settings;
@@ -6507,7 +6973,6 @@ index 0000000000000000000000000000000000000000..ba9e3934b69c7100366b4cf583e54d6f
 +public class ReaderScreensaverController {
 +    private static final String TAG = "ReaderScreensaver";
 +    public static final String WINDOW_TITLE_PREFIX = "ReaderScreensaver#";
-+    private static final String FULL_REFRESH_SEQUENCE = "sys.ridi.epd.full_refresh_seq";
 +
 +    private final Context mContext;
 +    private final WindowManager mWindowManager;
@@ -6577,6 +7042,7 @@ index 0000000000000000000000000000000000000000..ba9e3934b69c7100366b4cf583e54d6f
 +
 +    /** Called while the screen is still powered, as sleep begins. */
 +    public void onStartedGoingToSleep() {
++        if ("1".equals(android.os.SystemProperties.get("sys.ridi.shutdown"))) return;
 +        final long start = SystemClock.elapsedRealtime();
 +        Trace.beginSection("RIDI_SLEEP_show_request");
 +        Log.i(TAG, "SLEEP show request t=" + start);
@@ -6587,6 +7053,10 @@ index 0000000000000000000000000000000000000000..ba9e3934b69c7100366b4cf583e54d6f
 +            Trace.endSection();
 +            return;
 +        }
++        if (mContext.getSystemService(android.os.PowerManager.class).isInteractive()) {
++            Trace.endSection();
++            return;
++        }
 +        final int style = ReaderScreensaverSettings.getStyle(resolver);
 +        final CachedImage cached = obtainImageForSuspend(
 +                imagePathForStyle(style, resolver));
@@ -6594,34 +7064,38 @@ index 0000000000000000000000000000000000000000..ba9e3934b69c7100366b4cf583e54d6f
 +            Trace.endSection();
 +            return;
 +        }
-+        show(style);
++        if (!mContext.getSystemService(android.os.PowerManager.class).isInteractive()) {
++            show(style);
++        }
 +        Trace.endSection();
 +    }
 +
-+    /** Arm one panel refresh before the fallback is removed or live UI redraws. */
++    /** Remove fallback content so the live UI can be drawn before screen-on completes. */
 +    public void onStartedWakingUp() {
-+        requestWakePanelRefresh("wake start");
 +        removeFallbackWindow("wake start");
 +    }
 +
-+    /** Backstop for unusual wake paths that skip the wakefulness callback. */
++    /** One full panel refresh after the live screen is powered and ready. */
 +    public void onScreenTurnedOn(View refreshTarget) {
-+        requestWakePanelRefresh("screen turned on backstop");
 +        removeFallbackWindow("screen turned on backstop");
++        requestWakePanelRefresh("screen turned on");
 +    }
 +
 +    private void requestWakePanelRefresh(String phase) {
-+        if (!mSleepScreenPresented) {
++        if (!mSleepScreenPresented
++                || !mContext.getSystemService(android.os.PowerManager.class).isInteractive()) {
++            return;
++        }
++        // A sequence alone does not produce a frame when the live UI is
++        // unchanged. SF also repaints explicitly, even with a hidden status
++        // bar. Do not add View GC16 invalidations that could clean up twice.
++        final int result = SurfaceControl.requestEinkWakeRefresh();
++        if (result != 0) {
++            Log.w(TAG, "Wake full refresh request failed result=" + result);
 +            return;
 +        }
 +        mSleepScreenPresented = false;
-+        // The next live SurfaceFlinger frame consumes this sequence as one
-+        // panel-wide GC16. A separate View.invalidate(GC16) would submit a
-+        // second cleanup and can expose an intermediate wake frame.
-+        final int next = SystemProperties.getInt(FULL_REFRESH_SEQUENCE, 0) + 1;
-+        SystemProperties.set(FULL_REFRESH_SEQUENCE,
-+                Integer.toString(next <= 0 ? 1 : next));
-+        Log.i(TAG, "WAKE panel full refresh armed at " + phase + " t="
++        Log.i(TAG, "WAKE panel full refresh requested at " + phase + " t="
 +                + SystemClock.elapsedRealtime());
 +    }
 +
@@ -6646,8 +7120,12 @@ index 0000000000000000000000000000000000000000..ba9e3934b69c7100366b4cf583e54d6f
 +    }
 +
 +    private boolean submitImageOverlay(CachedImage image) {
++        if ("1".equals(android.os.SystemProperties.get("sys.ridi.shutdown"))) return false;
 +        synchronized (mImageCacheLock) {
 +            if (image.overlayMemory == null) {
++                return false;
++            }
++            if (mContext.getSystemService(android.os.PowerManager.class).isInteractive()) {
 +                return false;
 +            }
 +            final int sequence = nextSequence();
@@ -6678,6 +7156,7 @@ index 0000000000000000000000000000000000000000..ba9e3934b69c7100366b4cf583e54d6f
 +    }
 +
 +    private void show(int style) {
++        if ("1".equals(android.os.SystemProperties.get("sys.ridi.shutdown"))) return;
 +        if (mView != null) {
 +            return;
 +        }
@@ -7929,10 +8408,14 @@ index 65bfabd19fbbdc77e81698dad9007505c6e163c7..f4af95e06fd056b4c401cdd45ab12403
 -
 -
 diff --git a/services/core/java/com/android/server/BatteryService.java b/services/core/java/com/android/server/BatteryService.java
-index 83bd9ebded9576719ba6d88149c27487bb7b2128..96c337dec0cbe32d497a66c2e60d9ca0ce41c3a1 100644
+index 83bd9ebded9576719ba6d88149c27487bb7b2128..abd049e3eb9314fe1947e9e26478b1bb1eb16156 100644
 --- a/services/core/java/com/android/server/BatteryService.java
 +++ b/services/core/java/com/android/server/BatteryService.java
-@@ -47,6 +47,7 @@ import android.os.DropBoxManager;
+@@ -44,9 +44,11 @@ import android.os.IBatteryPropertiesListener;
+ import android.os.IBatteryPropertiesRegistrar;
+ import android.os.IBinder;
+ import android.os.DropBoxManager;
++import android.os.PowerManager;
  import android.os.RemoteException;
  import android.os.ServiceManager;
  import android.os.SystemClock;
@@ -7940,7 +8423,7 @@ index 83bd9ebded9576719ba6d88149c27487bb7b2128..96c337dec0cbe32d497a66c2e60d9ca0
  import android.os.UEventObserver;
  import android.os.UserHandle;
  import android.provider.Settings;
-@@ -227,6 +228,10 @@ public final class BatteryService extends SystemService {
+@@ -227,6 +229,10 @@ public final class BatteryService extends SystemService {
                          false, obs, UserHandle.USER_ALL);
                  updateBatteryWarningLevelLocked();
              }
@@ -7951,7 +8434,15 @@ index 83bd9ebded9576719ba6d88149c27487bb7b2128..96c337dec0cbe32d497a66c2e60d9ca0
          }
      }
  
-@@ -880,6 +885,9 @@ public final class BatteryService extends SystemService {
+@@ -291,6 +297,7 @@ public final class BatteryService extends SystemService {
+                     if (mActivityManagerInternal.isSystemReady()) {
+                         Intent intent = new Intent(Intent.ACTION_REQUEST_SHUTDOWN);
+                         intent.putExtra(Intent.EXTRA_KEY_CONFIRM, false);
++                        intent.putExtra(Intent.EXTRA_REASON, PowerManager.SHUTDOWN_LOW_BATTERY);
+                         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                         mContext.startActivityAsUser(intent, UserHandle.CURRENT);
+                     }
+@@ -880,6 +887,9 @@ public final class BatteryService extends SystemService {
  
      private final class Led {
          private final Light mBatteryLight;
@@ -7961,7 +8452,7 @@ index 83bd9ebded9576719ba6d88149c27487bb7b2128..96c337dec0cbe32d497a66c2e60d9ca0
  
          private final int mBatteryLowARGB;
          private final int mBatteryMediumARGB;
-@@ -902,12 +910,43 @@ public final class BatteryService extends SystemService {
+@@ -902,12 +912,43 @@ public final class BatteryService extends SystemService {
                      com.android.internal.R.integer.config_notificationsBatteryLedOff);
          }
  
@@ -8290,7 +8781,7 @@ index a2fea493b15fc5b48ea8caa37d043d31170c6d9f..aaa569c5f833dcf1cb4c0f16d5a14fe6
              return false;
          }
 diff --git a/services/core/java/com/android/server/policy/PhoneWindowManager.java b/services/core/java/com/android/server/policy/PhoneWindowManager.java
-index 7407fd4b5f9ef774a52ba3025e40b441f55f3a0c..5208bd6a3d68ce208f2edce35508a78438db17fc 100644
+index 7407fd4b5f9ef774a52ba3025e40b441f55f3a0c..598fd273e04aea8f4fac390a3c7e7fd2abd188ab 100644
 --- a/services/core/java/com/android/server/policy/PhoneWindowManager.java
 +++ b/services/core/java/com/android/server/policy/PhoneWindowManager.java
 @@ -168,6 +168,7 @@ import android.os.IDeviceIdleController;
@@ -8528,7 +9019,19 @@ index 7407fd4b5f9ef774a52ba3025e40b441f55f3a0c..5208bd6a3d68ce208f2edce35508a784
          // If screen is off then we treat the case where the keyguard is open but hidden
          // the same as if it were open and in front.
          // This will prevent any keys other than the power button from waking the screen
-@@ -7061,6 +7202,32 @@ public class PhoneWindowManager implements WindowManagerPolicy {
+@@ -6671,6 +6812,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
+     public void startedWakingUp() {
+         EventLog.writeEvent(70000, 1);
+         if (DEBUG_WAKEUP) Slog.i(TAG, "Started waking up...");
++        if (SystemProperties.getBoolean("ro.ridi.eink_mode", false)) {
++            // Wake may leave the hardware ON after a failed sleep barrier;
++            // it cannot rely on another hwc_blank(false) to clear the latch.
++            android.view.SurfaceControl.cancelEinkSleepOverlay();
++        }
+ 
+         // Since goToSleep performs these functions synchronously, we must
+         // do the same here.  We cannot post this work to a handler because
+@@ -7061,6 +7207,32 @@ public class PhoneWindowManager implements WindowManagerPolicy {
  
      @Override
      public int rotationForOrientationLw(int orientation, int lastRotation) {
@@ -8561,7 +9064,7 @@ index 7407fd4b5f9ef774a52ba3025e40b441f55f3a0c..5208bd6a3d68ce208f2edce35508a784
          if (false) {
              Slog.v(TAG, "rotationForOrientationLw(orient="
                          + orientation + ", last=" + lastRotation
-@@ -7390,6 +7557,18 @@ public class PhoneWindowManager implements WindowManagerPolicy {
+@@ -7390,6 +7562,18 @@ public class PhoneWindowManager implements WindowManagerPolicy {
      /** {@inheritDoc} */
      @Override
      public void showBootMessage(final CharSequence msg, final boolean always) {
@@ -8788,10 +9291,27 @@ index 50f4f24c8d44ccd0c79cff3355f88c5a22d7bfef..5e641f0dc2f1c8171137334aa9298995
                  brightnessSetByUser = false;
              } else if (mIsVrModeEnabled) {
 diff --git a/services/core/java/com/android/server/power/ShutdownThread.java b/services/core/java/com/android/server/power/ShutdownThread.java
-index 0f61171899c4c2547388c864ed6ecbfc6caeaeb3..7ecc7f0d78d6a99fd83af30ebc2952aea43bd62c 100644
+index 0f61171899c4c2547388c864ed6ecbfc6caeaeb3..fcf711ed07a6bf9c6ea6b711e304d13f2399c39e 100644
 --- a/services/core/java/com/android/server/power/ShutdownThread.java
 +++ b/services/core/java/com/android/server/power/ShutdownThread.java
-@@ -50,8 +50,11 @@ import android.os.UserManager;
+@@ -28,6 +28,7 @@ import android.bluetooth.BluetoothAdapter;
+ import android.bluetooth.IBluetoothManager;
+ import android.content.BroadcastReceiver;
+ import android.content.Context;
++import android.content.ComponentName;
+ import android.content.DialogInterface;
+ import android.content.Intent;
+ import android.content.IntentFilter;
+@@ -38,6 +39,8 @@ import android.nfc.INfcAdapter;
+ import android.nfc.NfcAdapter;
+ import android.os.FileUtils;
+ import android.os.Handler;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.TimeUnit;
+ import android.os.PowerManager;
+ import android.os.RecoverySystem;
+ import android.os.RemoteException;
+@@ -50,8 +53,11 @@ import android.os.UserManager;
  import android.os.Vibrator;
  import android.os.storage.IStorageManager;
  import android.os.storage.IStorageShutdownObserver;
@@ -8803,7 +9323,7 @@ index 0f61171899c4c2547388c864ed6ecbfc6caeaeb3..7ecc7f0d78d6a99fd83af30ebc2952ae
  import android.view.WindowManager;
  import android.widget.ProgressBar;
  import android.widget.TextView;
-@@ -115,7 +118,7 @@ public final class ShutdownThread extends Thread {
+@@ -115,7 +121,7 @@ public final class ShutdownThread extends Thread {
      private PowerManager.WakeLock mScreenWakeLock;
      private Handler mHandler;
  
@@ -8812,7 +9332,7 @@ index 0f61171899c4c2547388c864ed6ecbfc6caeaeb3..7ecc7f0d78d6a99fd83af30ebc2952ae
      private ProgressDialog mProgressDialog;
  
      private ShutdownThread() {
-@@ -167,27 +170,64 @@ public final class ShutdownThread extends Thread {
+@@ -167,27 +173,64 @@ public final class ShutdownThread extends Thread {
              if (sConfirmDialog != null) {
                  sConfirmDialog.dismiss();
              }
@@ -8890,6 +9410,151 @@ index 0f61171899c4c2547388c864ed6ecbfc6caeaeb3..7ecc7f0d78d6a99fd83af30ebc2952ae
      private static class CloseDialogReceiver extends BroadcastReceiver
              implements DialogInterface.OnDismissListener {
          private Context mContext;
+@@ -249,6 +292,11 @@ public final class ShutdownThread extends Thread {
+     }
+ 
+     private static ProgressDialog showShutdownDialog(Context context) {
++        if (usesReaderPowerOff(context)
++                && PowerManager.SHUTDOWN_LOW_BATTERY.equals(mReason)) {
++            sInstance.showReaderPowerOff();
++            return null;
++        }
+         // Throw up a system dialog to indicate the device is rebooting / shutting down.
+         ProgressDialog pd = new ProgressDialog(context);
+ 
+@@ -335,6 +383,75 @@ public final class ShutdownThread extends Thread {
+         return false;
+     }
+ 
++    private static final String POWER_OFF_DRAWN = "com.ridi.intent.action.POWER_OFF_DRAWN";
++    private static final String POWER_OFF_TOKEN = "ridi_shutdown_token";
++    private final CountDownLatch mPowerOffDrawn = new CountDownLatch(1);
++    private String mPowerOffToken;
++    private BroadcastReceiver mPowerOffReceiver;
++    private volatile boolean mPowerOffDrawAcknowledged;
++
++    private static boolean usesReaderPowerOff(Context context) {
++        return !mReboot && (mReason == null
++                || PowerManager.SHUTDOWN_USER_REQUESTED.equals(mReason)
++                || PowerManager.SHUTDOWN_LOW_BATTERY.equals(mReason))
++                && context.getResources().getBoolean(
++                com.android.internal.R.bool.config_ridiStockShutdownConfirmation);
++    }
++
++    private void preparePowerOffReceiver() {
++        SystemProperties.set("sys.ridi.shutdown.freeze", "0");
++        mPowerOffToken = Long.toHexString(System.nanoTime());
++        SystemProperties.set("sys.ridi.shutdown_token", mPowerOffToken);
++        mPowerOffReceiver = new BroadcastReceiver() {
++            @Override public void onReceive(Context context, Intent intent) {
++                if (POWER_OFF_DRAWN.equals(intent.getAction())
++                        && mPowerOffToken.equals(intent.getStringExtra(POWER_OFF_TOKEN))) {
++                    mPowerOffDrawAcknowledged = true;
++                    mPowerOffDrawn.countDown();
++                }
++            }
++        };
++        mContext.registerReceiver(mPowerOffReceiver, new IntentFilter(POWER_OFF_DRAWN),
++                android.Manifest.permission.STATUS_BAR_SERVICE, null);
++    }
++
++    private void showReaderPowerOff() {
++        Intent intent = new Intent().setComponent(new ComponentName(
++                "com.android.systemui", "com.android.systemui.ridi.ReaderLowBatteryActivity"));
++        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
++        intent.putExtra(Intent.EXTRA_REASON, mReason);
++        intent.putExtra(POWER_OFF_TOKEN, mPowerOffToken);
++        try {
++            mContext.startActivityAsUser(intent, UserHandle.CURRENT);
++        } catch (RuntimeException e) {
++            Log.e(TAG, "RIDI power-off activity unavailable; continuing safe shutdown", e);
++            mPowerOffDrawn.countDown();
++        }
++    }
++
++    private void waitForReaderPowerOff() {
++        if (mPowerOffReceiver == null) return;
++        try {
++            // Stock waits for the drawing app, then leaves 1500ms panel margin.
++            // Bound the missing-UI case to 5s; low-power shutdown cannot hang.
++            if (!mPowerOffDrawn.await(5, TimeUnit.SECONDS)) {
++                Log.w(TAG, "RIDI power-off draw acknowledgement timed out");
++            }
++            if (mPowerOffDrawAcknowledged) {
++                SystemClock.sleep(1500);
++                // SystemUI teardown must not submit a white replacement frame.
++                // Set only after a trusted draw reply and the stock panel margin.
++                SystemProperties.set("sys.ridi.shutdown.freeze", "1");
++                Log.i(TAG, "RIDI power-off drawing acknowledged; final frame frozen");
++            }
++        } catch (InterruptedException e) {
++            Thread.currentThread().interrupt();
++        } finally {
++            mContext.unregisterReceiver(mPowerOffReceiver);
++            mPowerOffReceiver = null;
++        }
++    }
++
+     private static void beginShutdownSequence(Context context) {
+         synchronized (sIsStartedGuard) {
+             if (sIsStarted) {
+@@ -344,10 +461,17 @@ public final class ShutdownThread extends Thread {
+             sIsStarted = true;
+         }
+ 
+-        sInstance.mProgressDialog = showShutdownDialog(context);
++        if (!usesReaderPowerOff(context)) {
++            sInstance.mProgressDialog = showShutdownDialog(context);
++        }
+         sInstance.mContext = context;
+         sInstance.mPowerManager = (PowerManager)context.getSystemService(Context.POWER_SERVICE);
+ 
++        if (usesReaderPowerOff(context)) {
++            SystemProperties.set("sys.ridi.shutdown", "1");
++            sInstance.preparePowerOffReceiver();
++        }
++
+         // make sure we never fall asleep again
+         sInstance.mCpuWakeLock = null;
+         try {
+@@ -362,10 +486,15 @@ public final class ShutdownThread extends Thread {
+ 
+         // also make sure the screen stays on for better user experience
+         sInstance.mScreenWakeLock = null;
+-        if (sInstance.mPowerManager.isScreenOn()) {
++        if (usesReaderPowerOff(context) || sInstance.mPowerManager.isScreenOn()) {
+             try {
+                 sInstance.mScreenWakeLock = sInstance.mPowerManager.newWakeLock(
+-                        PowerManager.FULL_WAKE_LOCK, TAG + "-screen");
++                        usesReaderPowerOff(context)
++                                && PowerManager.SHUTDOWN_LOW_BATTERY.equals(mReason)
++                                ? PowerManager.SCREEN_DIM_WAKE_LOCK
++                                        | PowerManager.ACQUIRE_CAUSES_WAKEUP
++                                : PowerManager.FULL_WAKE_LOCK,
++                        TAG + "-screen");
+                 sInstance.mScreenWakeLock.setReferenceCounted(false);
+                 sInstance.mScreenWakeLock.acquire();
+             } catch (SecurityException e) {
+@@ -374,6 +503,10 @@ public final class ShutdownThread extends Thread {
+             }
+         }
+ 
++        if (usesReaderPowerOff(context)) {
++            sInstance.mProgressDialog = showShutdownDialog(context);
++        }
++
+         // start the thread that initiates shutdown
+         sInstance.mHandler = new Handler() {
+         };
+@@ -417,6 +550,8 @@ public final class ShutdownThread extends Thread {
+             SystemProperties.set(REBOOT_SAFEMODE_PROPERTY, "1");
+         }
+ 
++        waitForReaderPowerOff();
++
+         Log.i(TAG, "Sending shutdown broadcast...");
+ 
+         // First send the high-level shut down broadcast.
 diff --git a/services/core/java/com/android/server/statusbar/StatusBarManagerService.java b/services/core/java/com/android/server/statusbar/StatusBarManagerService.java
 index 5b252e85423819290f389ff5b9a87e922eb05726..dbfd70a130f5cdb44c3796b2769631589b04e04d 100644
 --- a/services/core/java/com/android/server/statusbar/StatusBarManagerService.java
@@ -8988,7 +9653,7 @@ index 0c62be6ec1170bc711ece198bc9558c259739acd..eea987989d3d95a0280653a991191c89
          if (isKeyguardGoingAwayTransit(transit) && enter) {
              a = loadKeyguardExitAnimation(transit);
 diff --git a/services/core/java/com/android/server/wm/WindowManagerService.java b/services/core/java/com/android/server/wm/WindowManagerService.java
-index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..73440dc89d3d56d8f615e0bef87ad146674ca78c 100644
+index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..70a3fbf5ef7de7938786c468ced752c2171e4080 100644
 --- a/services/core/java/com/android/server/wm/WindowManagerService.java
 +++ b/services/core/java/com/android/server/wm/WindowManagerService.java
 @@ -156,6 +156,7 @@ import android.os.RemoteException;
@@ -8999,7 +9664,7 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..73440dc89d3d56d8f615e0bef87ad146
  import android.os.SystemProperties;
  import android.os.SystemService;
  import android.os.Trace;
-@@ -299,6 +300,17 @@ public class WindowManagerService extends IWindowManager.Stub
+@@ -299,6 +300,19 @@ public class WindowManagerService extends IWindowManager.Stub
      /** Amount of time (in milliseconds) to delay before declaring a window freeze timeout. */
      static final int WINDOW_FREEZE_TIMEOUT_DURATION = 2000;
  
@@ -9013,11 +9678,13 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..73440dc89d3d56d8f615e0bef87ad146
 +    // released by the matching EPDC submit sequence below.
 +    private static final long READER_SCREENSAVER_TIMEOUT_MS = 3000;
 +    private int mLastReaderScreensaverSequence;
++    private final java.util.concurrent.atomic.AtomicInteger mReaderScreensaverWaitGeneration =
++            new java.util.concurrent.atomic.AtomicInteger();
 +
      /** Amount of time (in milliseconds) to delay before declaring a seamless rotation timeout. */
      static final int SEAMLESS_ROTATION_TIMEOUT_DURATION = 2000;
  
-@@ -311,7 +323,10 @@ public class WindowManagerService extends IWindowManager.Stub
+@@ -311,7 +325,10 @@ public class WindowManagerService extends IWindowManager.Stub
       * If true, the window manager will do its own custom freezing and general
       * management of the screen during rotation.
       */
@@ -9029,11 +9696,12 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..73440dc89d3d56d8f615e0bef87ad146
  
      // Maximum number of milliseconds to wait for input devices to be enumerated before
      // proceding with safe mode detection.
-@@ -2919,7 +2934,110 @@ public class WindowManagerService extends IWindowManager.Stub
+@@ -2919,7 +2936,131 @@ public class WindowManagerService extends IWindowManager.Stub
  
      @Override
      public void screenTurningOff(ScreenOffListener listener) {
 -        mTaskSnapshotController.screenTurningOff(listener);
++        final int waitGeneration = mReaderScreensaverWaitGeneration.incrementAndGet();
 +        mTaskSnapshotController.screenTurningOff(() -> {
 +            final boolean readerDisplay =
 +                    SystemProperties.getBoolean("ro.ridi.eink_mode", false)
@@ -9045,12 +9713,21 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..73440dc89d3d56d8f615e0bef87ad146
 +                listener.onScreenOff();
 +                return;
 +            }
-+            waitForReaderScreensaverDrawn(listener);
++            waitForReaderScreensaverDrawn(listener, waitGeneration);
 +        });
 +    }
 +
++    private void abortReaderScreensaverSleep() {
++        mReaderScreensaverWaitGeneration.incrementAndGet();
++        SurfaceControl.cancelEinkSleepOverlay();
++        // Do not blank or suspend without SEND completion. Abort this failed
++        // transition and return to an interactive UI instead of an Asleep/ON trap.
++        mPowerManager.wakeUp(SystemClock.uptimeMillis(),
++                "android.server.wm:RIDI_SLEEP_EPDC_FAILED");
++    }
++
 +    /** Holds display power until the tagged sleep frame passes its EPDC barrier. */
-+    private void waitForReaderScreensaverDrawn(ScreenOffListener listener) {
++    private void waitForReaderScreensaverDrawn(ScreenOffListener listener, final int waitGeneration) {
 +        final long start = SystemClock.uptimeMillis();
 +        Trace.asyncTraceBegin(Trace.TRACE_TAG_WINDOW_MANAGER,
 +                "RIDI_SLEEP_wait_for_epdc_send", 0);
@@ -9061,6 +9738,12 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..73440dc89d3d56d8f615e0bef87ad146
 +            @Override
 +            public void run() {
 +                final long now = SystemClock.uptimeMillis();
++                if (waitGeneration != mReaderScreensaverWaitGeneration.get()
++                        || mPowerManager.isInteractive()) {
++                    Trace.asyncTraceEnd(Trace.TRACE_TAG_WINDOW_MANAGER,
++                            "RIDI_SLEEP_wait_for_epdc_send", 0);
++                    return;
++                }
 +                int drawnSequence = 0;
 +                synchronized (mWindowMap) {
 +                    final int[] foundSequence = new int[1];
@@ -9104,7 +9787,10 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..73440dc89d3d56d8f615e0bef87ad146
 +                    }
 +                }
 +
-+                final int submittedSequence = SurfaceControl.getEinkSleepSubmitSequence();
++                // A cancelled previous generation may retain its gralloc error.
++                // Query only after this transition has a new expected sequence.
++                final int submittedSequence = mExpectedSequence != 0
++                        ? SurfaceControl.getEinkSleepSubmitSequence() : -OsConstants.EINPROGRESS;
 +                if (mExpectedSequence != 0 && submittedSequence == mExpectedSequence) {
 +                    mLastReaderScreensaverSequence = submittedSequence;
 +                    Slog.i(TAG, "RIDI_SLEEP EPDC ready seq=" + submittedSequence
@@ -9116,13 +9802,15 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..73440dc89d3d56d8f615e0bef87ad146
 +                        && submittedSequence != -OsConstants.EINPROGRESS) {
 +                    Slog.e(TAG, "RIDI_SLEEP EPDC barrier failed expected="
 +                            + mExpectedSequence + " error=" + submittedSequence
-+                            + "; keep display on");
++                            + "; abort sleep and restore live display");
++                    abortReaderScreensaverSleep();
 +                    Trace.asyncTraceEnd(Trace.TRACE_TAG_WINDOW_MANAGER,
 +                            "RIDI_SLEEP_wait_for_epdc_send", 0);
 +                } else if (now - start >= READER_SCREENSAVER_TIMEOUT_MS) {
 +                    if (submittedSequence == -OsConstants.EINPROGRESS) {
 +                        Slog.e(TAG, "RIDI_SLEEP strict barrier timeout expected="
-+                                + mExpectedSequence + "; keep display on");
++                                + mExpectedSequence + "; abort sleep and restore live display");
++                        abortReaderScreensaverSleep();
 +                        Trace.asyncTraceEnd(Trace.TRACE_TAG_WINDOW_MANAGER,
 +                                "RIDI_SLEEP_wait_for_epdc_send", 0);
 +                        return;
@@ -9141,7 +9829,7 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..73440dc89d3d56d8f615e0bef87ad146
      }
  
      /**
-@@ -3698,6 +3816,16 @@ public class WindowManagerService extends IWindowManager.Stub
+@@ -3698,6 +3839,16 @@ public class WindowManagerService extends IWindowManager.Stub
      // only allow disables from pids which have count on, etc.
      @Override
      public void showStrictModeViolation(boolean on) {
