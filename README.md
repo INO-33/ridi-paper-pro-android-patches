@@ -6,6 +6,10 @@ RIDI Android 8에서 수정한 프레임워크, HAL 및 시스템 앱 변경을 
 
 **전체 프로젝트:** [메인 manifest 저장소](https://github.com/INO-33/ridi-paper-pro)
 
+처음 시작할 때에는 메인의 [개발환경 안내](https://github.com/INO-33/ridi-paper-pro/blob/checkpoint-20261016/DEVELOPMENT.md)를
+따릅니다. 바이너리 보존 패치에 포함된 이미지 자산의 공개 전 검토 대상은
+[공개 자산 목록](https://github.com/INO-33/ridi-paper-pro/blob/checkpoint-20261016/PUBLIC_ASSETS.md)에 있습니다.
+
 ## 구성
 
 | 파일/폴더 | 내용 |
