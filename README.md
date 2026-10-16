@@ -4,7 +4,7 @@ RIDI Android 8에서 수정한 프레임워크, HAL 및 시스템 앱 변경을 
 관리합니다. 커널과 기기 설정은 전용 저장소에 유지하고, 나머지 Android 변경은
 고정된 AOSP/NXP 원본에 적용하는 바이너리 보존 패치로 보관합니다.
 
-**전체 프로젝트:** [메인 manifest 저장소](https://github.com/INO-33/RIDI_ANDROID8_MANIFEST)
+**전체 프로젝트:** [메인 manifest 저장소](https://github.com/INO-33/ridi-paper-pro)
 
 ## 구성
 
