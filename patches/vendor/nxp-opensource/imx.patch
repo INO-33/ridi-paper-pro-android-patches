@@ -14,7 +14,7 @@ index 54d1f0c3fcd29b1b5f7cc29d18219e012992eceb..744e00642251d8f641c510e9d2691098
  LOCAL_CFLAGS += -DUSE_PAN_DISPLAY=1
  endif
 diff --git a/display/gralloc_v1/framebuffer.cpp b/display/gralloc_v1/framebuffer.cpp
-index a7430dd04d2db58b656b28464a197f55d84ca83f..4faeda1270a3c1827efd5d955355cc98dbfe1a24 100644
+index a7430dd04d2db58b656b28464a197f55d84ca83f..3eb31a479004230c51ac91ac9b20d2161fcd9cc6 100644
 --- a/display/gralloc_v1/framebuffer.cpp
 +++ b/display/gralloc_v1/framebuffer.cpp
 @@ -21,15 +21,22 @@
@@ -369,7 +369,7 @@ index a7430dd04d2db58b656b28464a197f55d84ca83f..4faeda1270a3c1827efd5d955355cc98
  }
  
  /*****************************************************************************/
-@@ -157,18 +386,1428 @@ static int fb_setSwapInterval(struct framebuffer_device_t* dev,
+@@ -157,18 +386,1430 @@ static int fb_setSwapInterval(struct framebuffer_device_t* dev,
      return 0;
  }
  
@@ -1402,7 +1402,9 @@ index a7430dd04d2db58b656b28464a197f55d84ca83f..4faeda1270a3c1827efd5d955355cc98
 +        uint32_t marker = 0;
 +        const int update_result = update_to_display(m, regions[i].left,
 +                regions[i].top, regions[i].width, regions[i].height,
-+                waveform, update_mode, wait_for_complete ? 1 : 0,
++                // The strict sleep barrier owns tagged markers. A legacy WAIT here
++                // consumes the marker before that barrier can find it (ENOENT).
++                waveform, update_mode, (wait_for_complete && !sleep_request) ? 1 : 0,
 +                update_flags, 0, sleep_sequence, &marker);
 +        if (update_result < 0) {
 +            all_submitted = false;
@@ -1805,7 +1807,7 @@ index a7430dd04d2db58b656b28464a197f55d84ca83f..4faeda1270a3c1827efd5d955355cc98
      return 0;
  }
  
-@@ -179,49 +1818,69 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
+@@ -179,49 +1820,69 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
  
      fb_context_t* ctx = (fb_context_t*)dev;
  
@@ -1909,7 +1911,7 @@ index a7430dd04d2db58b656b28464a197f55d84ca83f..4faeda1270a3c1827efd5d955355cc98
      }
      
      return 0;
-@@ -269,34 +1928,33 @@ int mapFrameBufferLocked(struct private_module_t* module)
+@@ -269,34 +1930,33 @@ int mapFrameBufferLocked(struct private_module_t* module)
      info.activate = FB_ACTIVATE_NOW;
  
      /*
@@ -1965,7 +1967,7 @@ index a7430dd04d2db58b656b28464a197f55d84ca83f..4faeda1270a3c1827efd5d955355cc98
      uint64_t  refreshQuotient =
      (
              uint64_t( info.upper_margin + info.lower_margin + info.yres + info.vsync_len)
-@@ -334,6 +1992,8 @@ int mapFrameBufferLocked(struct private_module_t* module)
+@@ -334,6 +1994,8 @@ int mapFrameBufferLocked(struct private_module_t* module)
              "yres         = %d px\n"
              "xres_virtual = %d px\n"
              "yres_virtual = %d px\n"
@@ -1974,7 +1976,7 @@ index a7430dd04d2db58b656b28464a197f55d84ca83f..4faeda1270a3c1827efd5d955355cc98
              "bpp          = %d\n"
              "r            = %2u:%u\n"
              "g            = %2u:%u\n"
-@@ -344,6 +2004,8 @@ int mapFrameBufferLocked(struct private_module_t* module)
+@@ -344,6 +2006,8 @@ int mapFrameBufferLocked(struct private_module_t* module)
              info.yres,
              info.xres_virtual,
              info.yres_virtual,
@@ -1983,7 +1985,7 @@ index a7430dd04d2db58b656b28464a197f55d84ca83f..4faeda1270a3c1827efd5d955355cc98
              info.bits_per_pixel,
              info.red.offset, info.red.length,
              info.green.offset, info.green.length,
-@@ -377,20 +2039,80 @@ int mapFrameBufferLocked(struct private_module_t* module)
+@@ -377,20 +2041,80 @@ int mapFrameBufferLocked(struct private_module_t* module)
       * map the framebuffer
       */
  
@@ -2074,7 +2076,7 @@ index a7430dd04d2db58b656b28464a197f55d84ca83f..4faeda1270a3c1827efd5d955355cc98
      return 0;
  }
  
-@@ -408,6 +2130,9 @@ static int fb_close(struct hw_device_t *dev)
+@@ -408,6 +2132,9 @@ static int fb_close(struct hw_device_t *dev)
  {
      fb_context_t* ctx = (fb_context_t*)dev;
      if (ctx) {
@@ -2084,7 +2086,7 @@ index a7430dd04d2db58b656b28464a197f55d84ca83f..4faeda1270a3c1827efd5d955355cc98
          free(ctx);
      }
      return 0;
-@@ -421,6 +2146,10 @@ int fb_device_open(hw_module_t const* module, const char* name,
+@@ -421,6 +2148,10 @@ int fb_device_open(hw_module_t const* module, const char* name,
          /* initialize our state here */
          fb_context_t *dev = (fb_context_t*)malloc(sizeof(*dev));
          memset(dev, 0, sizeof(*dev));
@@ -2095,7 +2097,7 @@ index a7430dd04d2db58b656b28464a197f55d84ca83f..4faeda1270a3c1827efd5d955355cc98
  
          /* initialize the procs */
          dev->device.common.tag = HARDWARE_DEVICE_TAG;
-@@ -429,7 +2158,13 @@ int fb_device_open(hw_module_t const* module, const char* name,
+@@ -429,7 +2160,13 @@ int fb_device_open(hw_module_t const* module, const char* name,
          dev->device.common.close = fb_close;
          dev->device.setSwapInterval = fb_setSwapInterval;
          dev->device.post            = fb_post;
@@ -2546,7 +2548,7 @@ index 5e51397b464d02b384a3e364f5e9a6ad7952e26f..2c87800f17ea7d0d1c6532cd0f3f7d27
  include $(BUILD_SHARED_LIBRARY)
  endif
 diff --git a/display/hwcomposer_v10/hwc_context.h b/display/hwcomposer_v10/hwc_context.h
-index bda1e07846a4e5e908ea69f37d72abc7b92cd128..d100b6014ba605673ede463d8b023bfcd0f1ba56 100644
+index bda1e07846a4e5e908ea69f37d72abc7b92cd128..0275133b71d7b6e3437bf6ac2a70c6be55c1b90d 100644
 --- a/display/hwcomposer_v10/hwc_context.h
 +++ b/display/hwcomposer_v10/hwc_context.h
 @@ -26,11 +26,11 @@
@@ -2562,11 +2564,10 @@ index bda1e07846a4e5e908ea69f37d72abc7b92cd128..d100b6014ba605673ede463d8b023bfc
  #include "hwc_vsync.h"
  /*****************************************************************************/
  #define HWC_PRIMARY_DISPLAY "/dev/graphics/fb0"
-@@ -53,10 +53,13 @@ struct hwc_context_t {
+@@ -53,10 +53,12 @@ struct hwc_context_t {
  
      int mFbFile;
      int mBlank;
-+    bool mLogFirstFrameAfterUnblank;
 +    bool mSleepOverlayLatched;
      int mDisplayType;
      nsecs_t mVsyncPeriod;
@@ -2672,11 +2673,14 @@ index de05844709b8cfc519ca2cd80f838198ab5967ad..f9230ed15fec80318f1bfed66e9fa013
      hwc_context_t *mCtx;
      mutable Mutex mLock;
 diff --git a/display/hwcomposer_v10/hwcomposer.cpp b/display/hwcomposer_v10/hwcomposer.cpp
-index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb05f1eed83 100644
+index d26cde974fff7d80d712f90c28dce82ba7414df4..68e46c4749cfc47b66667c341427422e4bc3d174 100644
 --- a/display/hwcomposer_v10/hwcomposer.cpp
 +++ b/display/hwcomposer_v10/hwcomposer.cpp
-@@ -17,23 +17,340 @@
+@@ -14,26 +14,330 @@
+  * limitations under the License.
+  */
  
+-
  #include <hardware/hardware.h>
  
 +#include <algorithm>
@@ -2706,14 +2710,6 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
  #include "hwc_context.h"
  #include "hwc_vsync.h"
 +#include "gralloc_priv.h"
-+
-+static long long monotonic_millis()
-+{
-+    struct timespec now;
-+    clock_gettime(CLOCK_MONOTONIC, &now);
-+    return static_cast<long long>(now.tv_sec) * 1000LL
-+            + now.tv_nsec / 1000000LL;
-+}
 +
 +struct DamageBounds {
 +    int left;
@@ -2870,7 +2866,6 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
 +    return result;
 +}
 +
-+
 +static void union_damage(DamageBounds* bounds,
 +        int left, int top, int right, int bottom)
 +{
@@ -2889,8 +2884,6 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
 +    bounds->right = std::max(bounds->right, right);
 +    bounds->bottom = std::max(bounds->bottom, bottom);
 +}
-+
-+
 +
 +static void clamp_damage(DamageBounds* bounds,
 +        int displayWidth, int displayHeight)
@@ -2962,7 +2955,6 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
 +    return TARGET_DAMAGE_VALID;
 +}
 +
-+
 +static void set_epdc_damage(hwc_context_t* ctx,
 +        const hwc_display_contents_1_t* primary)
 +{
@@ -3020,7 +3012,7 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
  
  /*****************************************************************************/
  static int hwc_device_open(const struct hw_module_t* module, const char* name,
-@@ -57,31 +374,28 @@ hwc_module_t HAL_MODULE_INFO_SYM = {
+@@ -57,31 +361,28 @@ hwc_module_t HAL_MODULE_INFO_SYM = {
      }
  };
  
@@ -3046,14 +3038,14 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
      struct hwc_context_t *ctx = (struct hwc_context_t *)dev;
 -    if (ctx == NULL || numDisplays == 0 || displays == NULL) {
 +    if (ctx == NULL || numDisplays == 0 || displays == NULL)
++        return 0;
++
++    hwc_display_contents_1_t* primary = displays[0];
++    if (primary == NULL)
          return 0;
 -    }
  
 -    // don't need to do anything here.
-+    hwc_display_contents_1_t* primary = displays[0];
-+    if (primary == NULL)
-+        return 0;
-+
 +    /*
 +     * SurfaceFlinger owns composition. HWC only presents its final framebuffer
 +     * target, preserving the standard HWC 1.x callback and layer ABI.
@@ -3067,7 +3059,7 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
      return 0;
  }
  
-@@ -89,28 +403,91 @@ static int hwc_set(hwc_composer_device_1_t *dev,
+@@ -89,28 +390,77 @@ static int hwc_set(hwc_composer_device_1_t *dev,
          size_t numDisplays, hwc_display_contents_1_t** displays)
  {
      struct hwc_context_t *ctx = (struct hwc_context_t *)dev;
@@ -3078,12 +3070,7 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
 -    if (ctx == NULL || numDisplays == 0 || displays == NULL) {
 +    if (ctx->mBlank != 0)
          return 0;
-+
-+    if (ctx->mLogFirstFrameAfterUnblank) {
-+        ctx->mLogFirstFrameAfterUnblank = false;
-+        ALOGI("RIDI_SLEEP first normal HWC frame after unblank t=%lld",
-+                monotonic_millis());
-     }
+-    }
  
 -    // when blanked, return.
 -    if (ctx->mBlank != 0) {
@@ -3110,9 +3097,6 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
 +        if (layer.compositionType == HWC_FRAMEBUFFER_TARGET)
 +            target = layer.handle;
      }
--
--    if (!success) {
--        return HWC_EGL_ERROR;
 +    primary->retireFenceFd = -1;
 +
 +    /*
@@ -3121,20 +3105,14 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
 +     * DisplayPowerController reaches blank. Unblank clears this one-shot latch.
 +     */
 +    if (ctx->mSleepOverlayLatched) {
-+        ALOGI("RIDI_SLEEP skip late HWC set after overlay submit");
+ 
+-    if (!success) {
+-        return HWC_EGL_ERROR;
 +        return 0;
      }
  
 -    return 0;
-+    const int32_t epdcPolicy = set_epdc_policy(ctx, primary);
-+    if (epdcPolicy != -1 && (epdcPolicy & EINK_POLICY_SLEEP_SCREEN) != 0) {
-+        const int32_t sequence = (epdcPolicy & EINK_SLEEP_SEQUENCE_MASK)
-+                >> EINK_SLEEP_SEQUENCE_SHIFT;
-+        if (sequence != 0) {
-+            ALOGI("RIDI_SLEEP HWC set seq=%d blank=%d t=%lld", sequence,
-+                    ctx->mBlank, monotonic_millis());
-+        }
-+    }
++    set_epdc_policy(ctx, primary);
 +    set_epdc_damage(ctx, primary);
 +
 +    /*
@@ -3172,7 +3150,7 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
  }
  
  static void hwc_registerProcs(struct hwc_composer_device_1 *dev,
-@@ -147,6 +524,58 @@ static int hwc_eventControl(struct hwc_composer_device_1* dev,
+@@ -147,6 +497,58 @@ static int hwc_eventControl(struct hwc_composer_device_1* dev,
      return ret;
  }
  
@@ -3231,22 +3209,17 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
  static int hwc_blank(struct hwc_composer_device_1* dev, int disp, int blank)
  {
      struct hwc_context_t* ctx = (struct hwc_context_t*)dev;
-@@ -155,7 +584,14 @@ static int hwc_blank(struct hwc_composer_device_1* dev, int disp, int blank)
-         return 0;
+@@ -156,6 +558,9 @@ static int hwc_blank(struct hwc_composer_device_1* dev, int disp, int blank)
      }
  
-+    ALOGI("RIDI_SLEEP HWC blank=%d last_submit_seq=%d t=%lld", blank,
-+            hwc_get_eink_sleep_submit_sequence(dev),
-+            monotonic_millis());
      ctx->mBlank = blank;
 +    if (!blank) {
-+        ctx->mLogFirstFrameAfterUnblank = true;
 +        ctx->mSleepOverlayLatched = false;
 +    }
      // HDMI and EPDC can't blank.
      if (ctx->mDisplayType == HWC_DISPLAY_HDMI ||
          ctx->mDisplayType == HWC_DISPLAY_EPDC) {
-@@ -179,6 +615,35 @@ static int hwc_blank(struct hwc_composer_device_1* dev, int disp, int blank)
+@@ -179,6 +584,35 @@ static int hwc_blank(struct hwc_composer_device_1* dev, int disp, int blank)
      return 0;
  }
  
@@ -3282,7 +3255,7 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
  static int hwc_query(struct hwc_composer_device_1 *dev,
                       int what, int* value)
  {
-@@ -189,7 +654,7 @@ static int hwc_query(struct hwc_composer_device_1 *dev,
+@@ -189,7 +623,7 @@ static int hwc_query(struct hwc_composer_device_1 *dev,
  
      switch (what) {
          case HWC_BACKGROUND_LAYER_SUPPORTED:
@@ -3291,7 +3264,7 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
              value[0] = 0;
              break;
          case HWC_VSYNC_PERIOD:
-@@ -218,8 +683,13 @@ static int hwc_device_close(struct hw_device_t *dev)
+@@ -218,8 +652,13 @@ static int hwc_device_close(struct hw_device_t *dev)
      }
  
      // close file handle.
@@ -3306,7 +3279,7 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
      }
      free(ctx);
  
-@@ -230,9 +700,11 @@ static int hwc_device_close(struct hw_device_t *dev)
+@@ -230,9 +669,11 @@ static int hwc_device_close(struct hw_device_t *dev)
  static int hwc_device_open(const struct hw_module_t* module, const char* name,
                             struct hw_device_t** device)
  {
@@ -3319,7 +3292,7 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
  
      struct hwc_context_t *dev = NULL;
      dev = (hwc_context_t*)malloc(sizeof(*dev));
-@@ -243,6 +715,7 @@ static int hwc_device_open(const struct hw_module_t* module, const char* name,
+@@ -243,6 +684,7 @@ static int hwc_device_open(const struct hw_module_t* module, const char* name,
  
      /* initialize our state here */
      memset(dev, 0, sizeof(*dev));
@@ -3327,7 +3300,7 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
  
      /* initialize the procs */
      dev->device.common.tag = HARDWARE_DEVICE_TAG;
-@@ -251,14 +724,48 @@ static int hwc_device_open(const struct hw_module_t* module, const char* name,
+@@ -251,14 +693,48 @@ static int hwc_device_open(const struct hw_module_t* module, const char* name,
  
      dev->device.prepare = hwc_prepare;
      dev->device.set = hwc_set;
@@ -3378,7 +3351,7 @@ index d26cde974fff7d80d712f90c28dce82ba7414df4..2130a34e4dbdc97dadbb7b0626f88cb0
      dev->mVsyncThread = new VSyncThread(dev);
      if (dev->mFbFile < 0) {
          dev->mVsyncThread->setFakeVSync(true);
-@@ -266,9 +773,28 @@ static int hwc_device_open(const struct hw_module_t* module, const char* name,
+@@ -266,9 +742,28 @@ static int hwc_device_open(const struct hw_module_t* module, const char* name,
  
      hwc_get_framebuffer_info(dev);
      hwc_get_display_type(dev);

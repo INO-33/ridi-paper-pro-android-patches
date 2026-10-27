@@ -6916,10 +6916,10 @@ index 0000000000000000000000000000000000000000..aa8a80565f13ab839a5ab84b8f10344e
 +}
 diff --git a/packages/SystemUI/src/com/android/systemui/ridi/ReaderScreensaverController.java b/packages/SystemUI/src/com/android/systemui/ridi/ReaderScreensaverController.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b550516865
+index 0000000000000000000000000000000000000000..29501a35a2aac9fef0cac6db6799348db5ffcf3c
 --- /dev/null
 +++ b/packages/SystemUI/src/com/android/systemui/ridi/ReaderScreensaverController.java
-@@ -0,0 +1,671 @@
+@@ -0,0 +1,615 @@
 +/*
 + * Copyright (C) 2026 E70Q10 Android port
 + *
@@ -6948,7 +6948,6 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +import android.view.LayoutInflater;
 +import android.view.SurfaceControl;
 +import android.view.View;
-+import android.view.ViewTreeObserver;
 +import android.view.WindowManager;
 +import android.widget.ImageView;
 +import android.widget.TextView;
@@ -6964,11 +6963,12 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 + * An E Ink panel is bistable: the last frame stays on the glass with no power
 + * and no further drawing. The kernel flushes pending EPDC updates before
 + * FB_BLANK_POWERDOWN, so a frame submitted here is guaranteed to reach the
-+ * panel. The update uses GC16 NOWAIT; the screen-off barrier waits only until
-+ * MXCFB_SEND_UPDATE succeeds, then kernel blank flushes the pending waveform.
++ * panel. Updates use GC16 NOWAIT; the strict screen-off barrier owns their
++ * completion markers and checks hardware idle before permitting blank.
 + *
-+ * Decoded images use a one-shot panel overlay with no Android window. A plain
-+ * opaque window remains only as the unreadable-image/failure fallback.
++ * Decoded images use a one-shot panel overlay with no Android window. An
++ * opaque cached picture is the exceptional window fallback. Transparent
++ * images require the native base-preserving path; missing files use a notice.
 + */
 +public class ReaderScreensaverController {
 +    private static final String TAG = "ReaderScreensaver";
@@ -7001,11 +7001,12 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +        final int overlayTop;
 +        final Rect alphaBounds;
 +        final boolean hasTransparency;
++        final Bitmap opaqueFallback;
 +
 +        CachedImage(String path, long lastModified, long fileLength,
 +                MemoryFile overlayMemory, int overlayWidth, int overlayHeight,
 +                int overlayStride, int overlayLeft, int overlayTop, Rect alphaBounds,
-+                boolean hasTransparency) {
++                boolean hasTransparency, Bitmap opaqueFallback) {
 +            this.path = path;
 +            this.lastModified = lastModified;
 +            this.fileLength = fileLength;
@@ -7017,6 +7018,7 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +            this.overlayTop = overlayTop;
 +            this.alphaBounds = alphaBounds;
 +            this.hasTransparency = hasTransparency;
++            this.opaqueFallback = opaqueFallback;
 +        }
 +    }
 +
@@ -7043,13 +7045,13 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +    /** Called while the screen is still powered, as sleep begins. */
 +    public void onStartedGoingToSleep() {
 +        if ("1".equals(android.os.SystemProperties.get("sys.ridi.shutdown"))) return;
-+        final long start = SystemClock.elapsedRealtime();
++
 +        Trace.beginSection("RIDI_SLEEP_show_request");
-+        Log.i(TAG, "SLEEP show request t=" + start);
++
 +        mSleepScreenPresented = false;
 +        final ContentResolver resolver = mContext.getContentResolver();
 +        if (!ReaderScreensaverSettings.isEnabled(resolver)) {
-+            Log.i(TAG, "Suspend image disabled");
++
 +            Trace.endSection();
 +            return;
 +        }
@@ -7065,7 +7067,14 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +            return;
 +        }
 +        if (!mContext.getSystemService(android.os.PowerManager.class).isInteractive()) {
-+            show(style);
++            if (cached != null && cached.opaqueFallback == null) {
++                // Transparent images require the native base-preserving path.
++                // Never replace their untouched pixels with a white notice.
++                mContext.getSystemService(android.os.PowerManager.class).wakeUp(
++                        SystemClock.uptimeMillis(), "com.android.systemui:SLEEP_IMAGE_UNAVAILABLE");
++            } else {
++                show(style, cached);
++            }
 +        }
 +        Trace.endSection();
 +    }
@@ -7095,17 +7104,16 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +            return;
 +        }
 +        mSleepScreenPresented = false;
-+        Log.i(TAG, "WAKE panel full refresh requested at " + phase + " t="
-+                + SystemClock.elapsedRealtime());
++
 +    }
 +
 +    private void removeFallbackWindow(String phase) {
 +        if (mView == null) {
 +            return;
 +        }
-+        final long now = SystemClock.elapsedRealtime();
++
 +        Trace.beginSection("RIDI_SLEEP_remove_fallback_window");
-+        Log.i(TAG, "WAKE remove fallback at " + phase + " t=" + now);
++
 +        try {
 +            final ImageView image = mView.findViewById(R.id.screensaver_image);
 +            if (image != null) {
@@ -7130,7 +7138,7 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +            }
 +            final int sequence = nextSequence();
 +            try {
-+                final long start = SystemClock.elapsedRealtime();
++
 +                final int result = SurfaceControl.submitEinkSleepOverlay(
 +                        image.overlayMemory.getFileDescriptor(), image.overlayWidth,
 +                        image.overlayHeight, image.overlayStride,
@@ -7139,11 +7147,7 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +                        image.overlayLeft, image.overlayTop, sequence);
 +                if (result == 0) {
 +                    mSleepScreenPresented = true;
-+                    Log.i(TAG, "SLEEP image overlay submitted seq=" + sequence
-+                            + " alphaBounds=" + image.alphaBounds + " dst="
-+                            + image.overlayLeft + "," + image.overlayTop + " size="
-+                            + image.overlayWidth + "x" + image.overlayHeight
-+                            + " after=" + (SystemClock.elapsedRealtime() - start) + "ms");
++
 +                    return true;
 +                }
 +                Log.w(TAG, "Sleep image overlay failed result=" + result
@@ -7155,7 +7159,7 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +        }
 +    }
 +
-+    private void show(int style) {
++    private void show(int style, CachedImage cached) {
 +        if ("1".equals(android.os.SystemProperties.get("sys.ridi.shutdown"))) return;
 +        if (mView != null) {
 +            return;
@@ -7163,11 +7167,10 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +        final int sequence = nextSequence();
 +        final View view = LayoutInflater.from(mContext)
 +                .inflate(R.layout.ridi_screensaver, null);
-+        bind(view);
++        bind(view, cached);
 +        // Apply GC16 and the generation before attach. ViewRootImpl merges an
 +        // explicit root policy into the first draw, avoiding a second frame.
 +        view.setDefaultUpdateMode(ReaderEinkRefresh.sleepScreenMode(sequence));
-+        traceFirstTraversal(view, sequence);
 +
 +        final WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
 +                WindowManager.LayoutParams.MATCH_PARENT,
@@ -7189,8 +7192,7 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +
 +        try {
 +            mWindowManager.addView(view, lp);
-+            Log.i(TAG, "SLEEP addView complete seq=" + sequence
-+                    + " t=" + SystemClock.elapsedRealtime());
++
 +        } catch (RuntimeException e) {
 +            Log.w(TAG, "Could not show the suspend image", e);
 +            final ImageView image = view.findViewById(R.id.screensaver_image);
@@ -7201,74 +7203,22 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +        }
 +        mView = view;
 +        mSleepScreenPresented = true;
-+        Log.i(TAG, "Suspend window queued seq=" + sequence + " style=" + style);
++
 +    }
 +
-+    private void traceFirstTraversal(View view, int sequence) {
-+        final ViewTreeObserver observer = view.getViewTreeObserver();
-+        observer.addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
-+            @Override
-+            public void onGlobalLayout() {
-+                if (view.getViewTreeObserver().isAlive()) {
-+                    view.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-+                }
-+                Log.i(TAG, "SLEEP first layout seq=" + sequence + " bounds="
-+                        + view.getWidth() + "x" + view.getHeight() + " t="
-+                        + SystemClock.elapsedRealtime());
-+            }
-+        });
-+        observer.addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
-+            @Override
-+            public boolean onPreDraw() {
-+                if (view.getViewTreeObserver().isAlive()) {
-+                    view.getViewTreeObserver().removeOnPreDrawListener(this);
-+                }
-+                Trace.traceBegin(Trace.TRACE_TAG_VIEW,
-+                        "RIDI_SLEEP_first_pre_draw_" + sequence);
-+                Trace.traceEnd(Trace.TRACE_TAG_VIEW);
-+                Log.i(TAG, "SLEEP first pre-draw seq=" + sequence + " t="
-+                        + SystemClock.elapsedRealtime());
-+                return true;
-+            }
-+        });
-+        observer.addOnDrawListener(new ViewTreeObserver.OnDrawListener() {
-+            private boolean mLogged;
-+
-+            @Override
-+            public void onDraw() {
-+                if (mLogged) return;
-+                mLogged = true;
-+                Trace.traceBegin(Trace.TRACE_TAG_VIEW,
-+                        "RIDI_SLEEP_first_draw_" + sequence);
-+                Trace.traceEnd(Trace.TRACE_TAG_VIEW);
-+                Log.i(TAG, "SLEEP first draw seq=" + sequence + " t="
-+                        + SystemClock.elapsedRealtime());
-+                // Removing an OnDrawListener during dispatch is illegal.
-+                view.post(() -> {
-+                    if (view.getViewTreeObserver().isAlive()) {
-+                        view.getViewTreeObserver().removeOnDrawListener(this);
-+                    }
-+                });
-+            }
-+        });
-+    }
-+
-+    private void bind(View view) {
++    private void bind(View view, CachedImage cached) {
 +        final TextView clock = view.findViewById(R.id.screensaver_clock);
 +        final TextView date = view.findViewById(R.id.screensaver_date);
 +        final TextView battery = view.findViewById(R.id.screensaver_battery);
 +        final TextView notice = view.findViewById(R.id.screensaver_notice);
 +        final ImageView image = view.findViewById(R.id.screensaver_image);
 +
-+        /*
-+         * A user image that cannot be read must not leave the panel blank for
-+         * the whole sleep period, so an unreadable or missing file falls back to
-+         * the clock.
-+         */
-+        // Only the missing-image/direct-submit-failure fallback reaches this
-+        // window. All decoded images use the same one-shot native path.
-+        final boolean showingImage = false;
-+        image.setVisibility(View.GONE);
++        // The exceptional opaque-image fallback uses the preloaded picture,
++        // not a second decode or the generic screen-off notice. Transparent
++        // images stay exclusively on the native base-preserving overlay path.
++        final boolean showingImage = cached != null && cached.opaqueFallback != null;
++        image.setImageBitmap(showingImage ? cached.opaqueFallback : null);
++        image.setVisibility(showingImage ? View.VISIBLE : View.GONE);
 +
 +        final boolean wantClock = false;
 +        final boolean wantBattery = false;
@@ -7331,26 +7281,18 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +        // Preserve PNG alpha for the transparent one-shot overlay checkpoint.
 +        options.inPreferredConfig = Bitmap.Config.ARGB_8888;
 +        try {
-+            final long start = SystemClock.elapsedRealtime();
++
 +            final Bitmap bitmap = BitmapFactory.decodeFile(path, options);
 +            if (bitmap == null) {
 +                Log.w(TAG, "Suspend image decode returned null: " + path);
 +                return null;
 +            }
-+            final int decodedWidth = bitmap.getWidth();
-+            final int decodedHeight = bitmap.getHeight();
-+            final boolean sourcePremultiplied = bitmap.isPremultiplied();
 +            final CachedImage image = buildCachedImage(file, bitmap);
 +            if (image == null) {
 +                recycleBitmapLocked(bitmap);
 +                return null;
 +            }
-+            Log.i(TAG, "Sleep image decoded path=" + path
-+                    + " size=" + decodedWidth + "x" + decodedHeight
-+                    + " alphaBounds=" + image.alphaBounds
-+                    + " transparent=" + image.hasTransparency
-+                    + " sourcePremultiplied=" + sourcePremultiplied
-+                    + " after=" + (SystemClock.elapsedRealtime() - start) + "ms");
++
 +            return image;
 +        } catch (OutOfMemoryError e) {
 +            Log.w(TAG, "Not enough memory for the suspend image", e);
@@ -7440,7 +7382,8 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +            final int top = (metrics.heightPixels - height) / 2;
 +            final CachedImage image = new CachedImage(file.getAbsolutePath(),
 +                    file.lastModified(), file.length(), memory, width, height,
-+                    stride, left, top, alphaBounds, hasTransparency);
++                    stride, left, top, alphaBounds, hasTransparency,
++                    !hasTransparency ? scaled.copy(Bitmap.Config.RGB_565, false) : null);
 +            memory = null;
 +            return image;
 +        } catch (IOException | ArithmeticException | OutOfMemoryError e) {
@@ -7465,7 +7408,7 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +        final File file = new File(path);
 +        synchronized (mImageCacheLock) {
 +            if (isFreshLocked(mCachedImage, file)) {
-+                Log.i(TAG, "Sleep image cache hit path=" + path);
++
 +                return mCachedImage;
 +            }
 +        }
@@ -7534,7 +7477,7 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +                    return;
 +                }
 +                if (isFreshLocked(mCachedImage, file)) {
-+                    Log.i(TAG, "Sleep image preload reused fresh cache reason=" + reason);
++
 +                    return;
 +                }
 +            }
@@ -7550,8 +7493,7 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +            }
 +            replaceCachedImageLocked(decoded);
 +        }
-+        Log.i(TAG, "Sleep image preload complete reason=" + reason
-+                + " cached=" + (decoded != null));
++
 +    }
 +
 +    private void replaceCachedImage(CachedImage replacement) {
@@ -7588,6 +7530,8 @@ index 0000000000000000000000000000000000000000..44915f84d4de1351c5bce58270d187b5
 +        if (image.overlayMemory != null) {
 +            image.overlayMemory.close();
 +        }
++        // opaqueFallback may still be held by an attached ImageView. Let its
++        // normal Bitmap lifetime release it after both owners are gone.
 +    }
 +
 +}
@@ -9653,7 +9597,7 @@ index 0c62be6ec1170bc711ece198bc9558c259739acd..eea987989d3d95a0280653a991191c89
          if (isKeyguardGoingAwayTransit(transit) && enter) {
              a = loadKeyguardExitAnimation(transit);
 diff --git a/services/core/java/com/android/server/wm/WindowManagerService.java b/services/core/java/com/android/server/wm/WindowManagerService.java
-index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..70a3fbf5ef7de7938786c468ced752c2171e4080 100644
+index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..3be795bcf6872777fc8e2f43e5ef3fdaf0c95fb1 100644
 --- a/services/core/java/com/android/server/wm/WindowManagerService.java
 +++ b/services/core/java/com/android/server/wm/WindowManagerService.java
 @@ -156,6 +156,7 @@ import android.os.RemoteException;
@@ -9696,7 +9640,7 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..70a3fbf5ef7de7938786c468ced752c2
  
      // Maximum number of milliseconds to wait for input devices to be enumerated before
      // proceding with safe mode detection.
-@@ -2919,7 +2936,131 @@ public class WindowManagerService extends IWindowManager.Stub
+@@ -2919,7 +2936,123 @@ public class WindowManagerService extends IWindowManager.Stub
  
      @Override
      public void screenTurningOff(ScreenOffListener listener) {
@@ -9733,7 +9677,6 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..70a3fbf5ef7de7938786c468ced752c2
 +                "RIDI_SLEEP_wait_for_epdc_send", 0);
 +        mH.post(new Runnable() {
 +            private int mExpectedSequence;
-+            private boolean mLoggedDrawn;
 +
 +            @Override
 +            public void run() {
@@ -9767,11 +9710,6 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..70a3fbf5ef7de7938786c468ced752c2
 +                if (overlaySequence != 0
 +                        && overlaySequence != mLastReaderScreensaverSequence) {
 +                    mExpectedSequence = overlaySequence;
-+                    if (!mLoggedDrawn) {
-+                        mLoggedDrawn = true;
-+                        Slog.i(TAG, "RIDI_SLEEP direct overlay requested seq="
-+                                + overlaySequence + " t=" + now);
-+                    }
 +                }
 +
 +                // A fallback window is allocated after a failed direct
@@ -9780,26 +9718,24 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..70a3fbf5ef7de7938786c468ced752c2
 +                if (drawnSequence != 0
 +                        && drawnSequence != mLastReaderScreensaverSequence) {
 +                    mExpectedSequence = drawnSequence;
-+                    if (!mLoggedDrawn) {
-+                        mLoggedDrawn = true;
-+                        Slog.i(TAG, "RIDI_SLEEP window drawn seq=" + drawnSequence
-+                                + " t=" + now);
-+                    }
 +                }
 +
 +                // A cancelled previous generation may retain its gralloc error.
 +                // Query only after this transition has a new expected sequence.
 +                final int submittedSequence = mExpectedSequence != 0
 +                        ? SurfaceControl.getEinkSleepSubmitSequence() : -OsConstants.EINPROGRESS;
++                // A fallback may be drawn before HWC posts its first tagged
++                // buffer. A missing/stale preceding marker is pending, never
++                // success; keep polling only within the existing strict limit.
++                final boolean barrierPending = submittedSequence == -OsConstants.EINPROGRESS
++                        || submittedSequence == -OsConstants.ENOENT
++                        || submittedSequence == -OsConstants.ESTALE;
 +                if (mExpectedSequence != 0 && submittedSequence == mExpectedSequence) {
 +                    mLastReaderScreensaverSequence = submittedSequence;
-+                    Slog.i(TAG, "RIDI_SLEEP EPDC ready seq=" + submittedSequence
-+                            + " after=" + (now - start) + "ms; release screen-off");
 +                    Trace.asyncTraceEnd(Trace.TRACE_TAG_WINDOW_MANAGER,
 +                            "RIDI_SLEEP_wait_for_epdc_send", 0);
 +                    listener.onScreenOff();
-+                } else if (submittedSequence < 0
-+                        && submittedSequence != -OsConstants.EINPROGRESS) {
++                } else if (submittedSequence < 0 && !barrierPending) {
 +                    Slog.e(TAG, "RIDI_SLEEP EPDC barrier failed expected="
 +                            + mExpectedSequence + " error=" + submittedSequence
 +                            + "; abort sleep and restore live display");
@@ -9807,7 +9743,7 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..70a3fbf5ef7de7938786c468ced752c2
 +                    Trace.asyncTraceEnd(Trace.TRACE_TAG_WINDOW_MANAGER,
 +                            "RIDI_SLEEP_wait_for_epdc_send", 0);
 +                } else if (now - start >= READER_SCREENSAVER_TIMEOUT_MS) {
-+                    if (submittedSequence == -OsConstants.EINPROGRESS) {
++                    if (barrierPending) {
 +                        Slog.e(TAG, "RIDI_SLEEP strict barrier timeout expected="
 +                                + mExpectedSequence + "; abort sleep and restore live display");
 +                        abortReaderScreensaverSleep();
@@ -9829,7 +9765,7 @@ index 3b5939aeb2d3ad4038eb08fa5366995c8846c8c4..70a3fbf5ef7de7938786c468ced752c2
      }
  
      /**
-@@ -3698,6 +3839,16 @@ public class WindowManagerService extends IWindowManager.Stub
+@@ -3698,6 +3831,16 @@ public class WindowManagerService extends IWindowManager.Stub
      // only allow disables from pids which have count on, etc.
      @Override
      public void showStrictModeViolation(boolean on) {

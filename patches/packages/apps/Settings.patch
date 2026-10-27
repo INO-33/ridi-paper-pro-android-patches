@@ -6682,10 +6682,10 @@ index 0000000000000000000000000000000000000000..2b86798ddd577040150cff0934a2db65
 +}
 diff --git a/src/com/android/settings/ridi/RidiDetailSettingsActivity.java b/src/com/android/settings/ridi/RidiDetailSettingsActivity.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..fd1803177fc30518f12cfebb84a60fe91b4aec51
+index 0000000000000000000000000000000000000000..356571b63899eba87af2442ea62a0eaa9e860679
 --- /dev/null
 +++ b/src/com/android/settings/ridi/RidiDetailSettingsActivity.java
-@@ -0,0 +1,489 @@
+@@ -0,0 +1,502 @@
 +/*
 + * Copyright (C) 2026 E70Q10 Android port
 + *
@@ -6932,6 +6932,8 @@ index 0000000000000000000000000000000000000000..fd1803177fc30518f12cfebb84a60fe9
 +        rows.add(new Row(icon, "커널 버전", safe(System.getProperty("os.version")), false, null));
 +        rows.add(new Row(icon, "기기", safe(Build.DEVICE), false, null));
 +        rows.add(new Row(icon, "보드", safe(Build.BOARD), false, null));
++        rows.add(new Row(getDrawable(R.drawable.ridi_icon_developer), "개발자 크레딧",
++                "Jesus Loves U, Dev. by Juwon", false, null));
 +        return rows;
 +    }
 +
@@ -7149,6 +7151,16 @@ index 0000000000000000000000000000000000000000..fd1803177fc30518f12cfebb84a60fe9
 +        }
 +
 +        @Override
++        public boolean areAllItemsEnabled() {
++            return false;
++        }
++
++        @Override
++        public boolean isEnabled(int position) {
++            return getItem(position).actionable;
++        }
++
++        @Override
 +        public View getView(int position, View convertView, ViewGroup parent) {
 +            final View rowView = convertView != null ? convertView
 +                    : LayoutInflater.from(getContext()).inflate(
@@ -7168,9 +7180,10 @@ index 0000000000000000000000000000000000000000..fd1803177fc30518f12cfebb84a60fe9
 +                toggle.setVisibility(View.GONE);
 +                chevron.setVisibility(row.actionable ? View.VISIBLE : View.INVISIBLE);
 +            }
++            rowView.setOnClickListener(row.action == null ? null : v -> row.action.run());
++            // setOnClickListener(null) also sets clickable; apply the row policy last.
 +            rowView.setClickable(row.actionable);
 +            rowView.setFocusable(row.actionable);
-+            rowView.setOnClickListener(row.action == null ? null : v -> row.action.run());
 +            return rowView;
 +        }
 +    }

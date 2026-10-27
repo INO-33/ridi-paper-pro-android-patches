@@ -2053,7 +2053,7 @@ index acfad46526bc3e5cede75b1a0820b6d5730d22d9..7554121a4da1ab5b50a1fe58edcb9727
      /* ------------------------------------------------------------------------
       * Feature prototyping
 diff --git a/services/surfaceflinger/SurfaceFlinger_hwc1.cpp b/services/surfaceflinger/SurfaceFlinger_hwc1.cpp
-index 247d80bc0755391f90381983238c2c4cea12182f..1de065b6597cd873c8800c6112a094f166aab95c 100644
+index 247d80bc0755391f90381983238c2c4cea12182f..711916616609006287bdb09957fc8200e4d8a5ca 100644
 --- a/services/surfaceflinger/SurfaceFlinger_hwc1.cpp
 +++ b/services/surfaceflinger/SurfaceFlinger_hwc1.cpp
 @@ -23,6 +23,7 @@
@@ -2077,7 +2077,7 @@ index 247d80bc0755391f90381983238c2c4cea12182f..1de065b6597cd873c8800c6112a094f1
      char value[PROPERTY_VALUE_MAX];
  
      property_get("ro.bq.gpu_to_cpu_unsupported", value, "0");
-@@ -775,6 +782,122 @@ int SurfaceFlinger::getActiveConfig(const sp<IBinder>& display) {
+@@ -775,6 +782,144 @@ int SurfaceFlinger::getActiveConfig(const sp<IBinder>& display) {
      return BAD_VALUE;
  }
  
@@ -2169,28 +2169,50 @@ index 247d80bc0755391f90381983238c2c4cea12182f..1de065b6597cd873c8800c6112a094f1
 +     * direct request.
 +     */
 +    mEinkSleepOverlaySequence.store(sequence, std::memory_order_release);
-+    status_t overlayResult = NO_INIT;
-+    sp<MessageBase> msg = new LambdaMessage([this, ownedFd, width, height,
-+            strideBytes, alphaLeft, alphaTop, alphaRight, alphaBottom, dstLeft,
-+            dstTop, sequence, epoch, &overlayResult] {
-+        if (epoch != mEinkSleepOverlayEpoch.load(std::memory_order_acquire)) {
-+            overlayResult = -ECANCELED;
-+            int32_t expected = sequence;
-+            mEinkSleepOverlaySequence.compare_exchange_strong(expected, 0,
-+                    std::memory_order_acq_rel);
-+            return;
++    status_t result = NO_INIT;
++    // A wake refresh can still be rebuilding the framebuffer/shadow when the
++    // next sleep begins. Re-prime that base once and retry only EAGAIN, on the
++    // Binder thread; never sleep or run a normal-frame WAIT on the SF thread.
++    const nsecs_t retryDeadline = systemTime(SYSTEM_TIME_MONOTONIC)
++            + 250 * 1000000LL;
++    bool baseRepaintRequested = false;
++    do {
++        status_t overlayResult = NO_INIT;
++        sp<MessageBase> msg = new LambdaMessage([this, ownedFd, width, height,
++                strideBytes, alphaLeft, alphaTop, alphaRight, alphaBottom, dstLeft,
++                dstTop, sequence, epoch, &overlayResult] {
++            if (epoch != mEinkSleepOverlayEpoch.load(std::memory_order_acquire)) {
++                overlayResult = -ECANCELED;
++                return;
++            }
++            overlayResult = getHwComposer().submitEinkSleepOverlay(ownedFd, width,
++                    height, strideBytes, alphaLeft, alphaTop, alphaRight,
++                    alphaBottom, dstLeft, dstTop, sequence);
++        });
++        const status_t posted = postMessageSync(msg);
++        result = posted == NO_ERROR ? overlayResult : posted;
++        if (result != -EAGAIN ||
++                systemTime(SYSTEM_TIME_MONOTONIC) >= retryDeadline)
++            break;
++        if (!baseRepaintRequested) {
++            sp<MessageBase> prime = new LambdaMessage([this, epoch] {
++                if (epoch == mEinkSleepOverlayEpoch.load(std::memory_order_acquire))
++                    repaintEverything();
++            });
++            result = postMessageSync(prime);
++            if (result != NO_ERROR)
++                break;
++            baseRepaintRequested = true;
 +        }
-+        // This is the final panel operation before blank. It deliberately
-+        // covers SystemUI as-is; the sleep path must not synthesize a separate
-+        // navigation-bar removal composition first.
-+        overlayResult = getHwComposer().submitEinkSleepOverlay(ownedFd, width,
-+                height, strideBytes, alphaLeft, alphaTop, alphaRight,
-+                alphaBottom, dstLeft, dstTop, sequence);
-+    });
-+    const status_t postResult = postMessageSync(msg);
++        usleep(20000);
++    } while (true);
 +    close(ownedFd);
-+    const status_t result = postResult == NO_ERROR ? overlayResult : postResult;
 +    if (result != NO_ERROR) {
++        // A rejected generation has no submitted frame. Do not let WMS query
++        // a preceding sleep's marker while a fallback window is being drawn.
++        int32_t expected = sequence;
++        mEinkSleepOverlaySequence.compare_exchange_strong(expected, 0,
++                std::memory_order_acq_rel);
 +        ALOGE("RIDI_SLEEP direct overlay rejected seq=%d result=%d",
 +                sequence, result);
 +    }
@@ -2200,7 +2222,7 @@ index 247d80bc0755391f90381983238c2c4cea12182f..1de065b6597cd873c8800c6112a094f1
  void SurfaceFlinger::setActiveConfigInternal(const sp<DisplayDevice>& hw, int mode) {
      ALOGD("Set active config mode=%d, type=%d flinger=%p", mode, hw->getDisplayType(),
            this);
-@@ -1499,6 +1622,26 @@ void SurfaceFlinger::doComposition() {
+@@ -1499,6 +1644,26 @@ void SurfaceFlinger::doComposition() {
              // transform the dirty region into this screen's coordinate space
              const Region dirtyRegion(hw->getDirtyRegion(repaintEverything));
  
@@ -2227,7 +2249,7 @@ index 247d80bc0755391f90381983238c2c4cea12182f..1de065b6597cd873c8800c6112a094f1
              // repaint the framebuffer (if needed)
              doDisplayComposition(hw, dirtyRegion);
  
-@@ -2138,10 +2281,22 @@ void SurfaceFlinger::doDisplayComposition(const sp<const DisplayDevice>& hw,
+@@ -2138,10 +2303,22 @@ void SurfaceFlinger::doDisplayComposition(const sp<const DisplayDevice>& hw,
      hw->swapRegion.orSelf(dirtyRegion);
  
      uint32_t flags = hw->getFlags();
@@ -2254,7 +2276,7 @@ index 247d80bc0755391f90381983238c2c4cea12182f..1de065b6597cd873c8800c6112a094f1
          dirtyRegion.set(hw->swapRegion.bounds());
      } else {
          if (flags & DisplayDevice::PARTIAL_UPDATES) {
-@@ -2308,7 +2463,14 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<const DisplayDevice>& hw, const
+@@ -2308,7 +2485,14 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<const DisplayDevice>& hw, const
  void SurfaceFlinger::drawWormhole(const sp<const DisplayDevice>& hw, const Region& region) const {
      const int32_t height = hw->getHeight();
      RenderEngine& engine(getRenderEngine());
@@ -2270,7 +2292,7 @@ index 247d80bc0755391f90381983238c2c4cea12182f..1de065b6597cd873c8800c6112a094f1
  }
  
  status_t SurfaceFlinger::addClientLayer(const sp<Client>& client,
-@@ -3947,7 +4109,8 @@ status_t SurfaceFlinger::captureScreenImplLocked(
+@@ -3947,7 +4131,8 @@ status_t SurfaceFlinger::captureScreenImplLocked(
                      // this binds the given EGLImage as a framebuffer for the
                      // duration of this scope.
                      RenderEngine::BindImageAsFramebuffer imageBond(getRenderEngine(), image);

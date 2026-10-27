@@ -1,5 +1,5 @@
 {
-  "checkpoint": "checkpoint-20261016",
+  "checkpoint": "checkpoint-20261027",
   "projects": [
     {
       "path": "build/make",
@@ -10,7 +10,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "f19548e8ce4971595bec3c71f1a7691fc670c380",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_BUILD_MAKE",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "ff61ab0852a6f83ae0002d48f9a2597ab50703ae"
     },
     {
@@ -22,7 +22,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "a9aa47ee38e6a9ba4af0194702b0d4e365c3c634",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_DEVICE_FSL",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "c185d8c8421e95bb5399b4947c631ae937738ff1"
     },
     {
@@ -34,7 +34,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "0c8540f0d52ab6f78eeea2e97d29f9ea42e07157",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_DEVICE_GENERIC_GOLDFISH",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "dd829b110e4f16f028824ec1c064fa067391427d"
     },
     {
@@ -46,7 +46,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "feac83cc7d14390897c40fc9977d6d17895015ed",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_DEVICE_GENERIC_GOLDFISH_OPENGL",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "fa3e9d102a7358a6e5bcd15db8015db6b7fcacd7"
     },
     {
@@ -58,7 +58,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "b6a48efa5d6ea4e40662dceda8cae96f3bdf22ea",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_EXTERNAL_MESA3D",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "6a1748b81a7d4e6840a2f27b257c9b33acd37f1e"
     },
     {
@@ -70,31 +70,31 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "3df487acd3131c8f15ab8906a630caf639bcade3",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_FRAMEWORKS_AV",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "15f1cf87b9cea79a4c43214ffc8a54d92dbd31c6"
     },
     {
       "path": "frameworks/base",
       "base_commit": "4528b036f17eb07e63b45fe32a8322144445d626",
-      "result_tree": "9507d4e3c6b1793d91a3916d3be34e087536854c",
+      "result_tree": "2796575f8cecc38f70a6276fd1dfec5659162057",
       "patch": "patches/frameworks/base.patch",
-      "patch_sha256": "9fd8e978ce8c30a4726636b99e3bb37338d65065e7137eb5a7a9c22848fe0db8",
+      "patch_sha256": "860bbc5df67e2311e67cc24e655e34750f4ed3ccf5c58fadaa51ab90a304cd29",
       "gitlink_targets": {},
       "previous_snapshot_commit": "b0b3c1f6463731b3b010ad88f755f1614f9e9271",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_FRAMEWORKS_BASE",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "4528b036f17eb07e63b45fe32a8322144445d626"
     },
     {
       "path": "frameworks/native",
       "base_commit": "4ae65045f7de29ef373551642b0901386382f905",
-      "result_tree": "7e6ee7e6ecf9d3562b9bace69f4b6e721e15bb39",
+      "result_tree": "5207fdc16b2819c4c6fe68a75d715709a0493017",
       "patch": "patches/frameworks/native.patch",
-      "patch_sha256": "7a75f49d20846de6963a23e471f38ccb13e1ee3fae4e9be8acd67f708de3b7d9",
+      "patch_sha256": "e4a6ce4a3231e2a2e3724fc829b2225617c0fec1af759fe865fc423ed9bade3b",
       "gitlink_targets": {},
       "previous_snapshot_commit": "14c74fc07ecd983cb64706db8d02ba83edae07fe",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_FRAMEWORKS_NATIVE",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "4ae65045f7de29ef373551642b0901386382f905"
     },
     {
@@ -106,7 +106,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "3a565ebeed62339d246c35c32e8cf86f38771a15",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_FRAMEWORKS_OPT_NET_WIFI",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "234b77a1f961f8f8110f84dd272f1739452ac442"
     },
     {
@@ -118,7 +118,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "e87e98bd2b76b8105b89b0aa150691bbd4548cd8",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_HARDWARE_LIBHARDWARE",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "cc54b59f364f8d2321c19ee4d2e2a42bbd4f45df"
     },
     {
@@ -130,7 +130,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "4f412c0c159d94e546a537f7a0b8fe889c2b8e2f",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_PACKAGES_APPS_BROWSER2",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "ca271c7361bbaafd6c8e860816836a14274a77b0"
     },
     {
@@ -142,7 +142,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "b02b4e7f2dfc98394bc6c736eec966c772358525",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_PACKAGES_APPS_DOCUMENTSUI",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "7269dcd95f5776b13c9c6f6ee7a8f81613f306d8"
     },
     {
@@ -154,31 +154,31 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "a26d4443bd9ac789c72d62292cf881ffec1ddd36",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_PACKAGES_APPS_PACKAGEINSTALLER",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "32364fac2102b3c224cc4e8d6b50e3cafb4376a3"
     },
     {
       "path": "packages/apps/Settings",
       "base_commit": "5c3a63546bbd4d82a126ee15579419e898cbd574",
-      "result_tree": "8a8728c0150dbed819c6883151a9b8a66b1483a7",
+      "result_tree": "88c9b91db24a5aef97777c7477e26e262cd9750e",
       "patch": "patches/packages/apps/Settings.patch",
-      "patch_sha256": "ed7e3c77615f7a45cf055a7448ba09aef47c4ddbad498af152572dcfe3469d1b",
+      "patch_sha256": "1053a294741874f01f1c7982a3cb4f76bfe73f7bad6a29bc05fab164c0065d87",
       "gitlink_targets": {},
       "previous_snapshot_commit": "335dbf032d2c648c13aded1f3df8c9ae7e7bcf65",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_PACKAGES_APPS_SETTINGS",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "5c3a63546bbd4d82a126ee15579419e898cbd574"
     },
     {
       "path": "packages/inputmethods/LatinIME",
       "base_commit": "6c71275ff34bff8443473c39c23c27feed54c10c",
-      "result_tree": "c63a8619f04df5bda0920843b9e6fe88524b9997",
+      "result_tree": "7e285a3d7031a5b4c0e86f02af5702ea569303cb",
       "patch": "patches/packages/inputmethods/LatinIME.patch",
-      "patch_sha256": "7fad95ac03c7eff887b597701770dca94dc40c3c88a69f52939676fd4d69ed8e",
+      "patch_sha256": "2fb8e045dacacf1e0e44f71174f17d149bffba7e6e3efd286beaf81370dc3426",
       "gitlink_targets": {},
       "previous_snapshot_commit": "ee6bbf6d9f93dec0d1de7a54d4034ec14f11a792",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_PACKAGES_INPUTMETHODS_LATINIME",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "6c71275ff34bff8443473c39c23c27feed54c10c"
     },
     {
@@ -190,7 +190,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "52e7452abf5071ba06fe7b4dfb932d76cc79cd08",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_PREBUILTS_CLANG_HOST_LINUX_X86",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "0cc142357b48a5c4d7a8b19c9db0c53eef2f4491"
     },
     {
@@ -202,7 +202,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "152af4a68a8074a84d1ffd3f5da1340d43504783",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_PREBUILTS_GCC_LINUX_X86_ARM_ARM_LINUX_ANDROIDEABI_4.9",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "d912247d868e39b5e3d8686009ffa0306388d6ef"
     },
     {
@@ -214,7 +214,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "c3ca4c3a8d732cd06125262ec91aef1c8c1e60a4",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_PREBUILTS_GCC_LINUX_X86_X86_X86_64_LINUX_ANDROID_4.9",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "8dc419f50440127c6cad7d785365d71a89e8bdff"
     },
     {
@@ -226,7 +226,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "ea4fe29e91059523fc55a2a8b4e5e271b6d25cea",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_SYSTEM_CONNECTIVITY_WIFICOND",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "e43b517aecf45efb556d2c9365a9f1fbe0275ed8"
     },
     {
@@ -238,7 +238,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "e497c34cc596f477a86180d66cab6556a4081e6e",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_SYSTEM_CORE",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "ecf3b37464200f7d8a9f355d7e1f7b4ff96fd72c"
     },
     {
@@ -250,19 +250,19 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "76357ead7b805b18860c71afa4a907a18129bdcf",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_SYSTEM_SEPOLICY",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "d01ada892433d084c10c6798520d78504514c5d8"
     },
     {
       "path": "vendor/nxp-opensource/imx",
       "base_commit": "10c46f4e7488dc67425c2ef65763b72f18c5777e",
-      "result_tree": "ddd283780c731fcc18f0312c04f7d69de3617da5",
+      "result_tree": "20db36d0a23cb8c7e76ff13cf2a55295007f5e41",
       "patch": "patches/vendor/nxp-opensource/imx.patch",
-      "patch_sha256": "fee0aa3c153b8bbe478ffb20e80fec6de6528a63d65e871a00e4ffaf3e242a24",
+      "patch_sha256": "cf67f4db10482939bbab0b0a840f355db0a58e5a77a0f9bd823ee1f483b24112",
       "gitlink_targets": {},
       "previous_snapshot_commit": "d8f8ed62721ca686620721245527817773c1a936",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_VENDOR_NXP_OPENSOURCE_IMX",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "c6fa3c07d2c5f64027f99a93777e8bce7e88267f"
     },
     {
@@ -274,7 +274,7 @@
       "gitlink_targets": {},
       "previous_snapshot_commit": "f3afe5200f803317b828cd4adccd88db845433b1",
       "archived_provenance_repository": "INO-33/RIDI_ANDROID8_VENDOR_NXP_OPENSOURCE_IMX_LIB",
-      "source_checkpoint": "2026-10-16",
+      "source_checkpoint": "2026-10-27",
       "original_working_head": "67083e1999d5baa90d7141d84bb866ec8a7cfa90"
     }
   ],

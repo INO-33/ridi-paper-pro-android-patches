@@ -760,10 +760,10 @@ index 0000000000000000000000000000000000000000..28ca9a9c072d3e6ac092de900fcd9710
 +}
 diff --git a/java/lite/src/com/android/inputmethod/latin/LatinIME.java b/java/lite/src/com/android/inputmethod/latin/LatinIME.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..31f6f2740fbeab729ae107d171cb540770052bf5
+index 0000000000000000000000000000000000000000..71b36b3bb752a89489a089ad2c7958fd358dff26
 --- /dev/null
 +++ b/java/lite/src/com/android/inputmethod/latin/LatinIME.java
-@@ -0,0 +1,427 @@
+@@ -0,0 +1,497 @@
 +/*
 + * Copyright (C) 2026
 + * SPDX-License-Identifier: Apache-2.0
@@ -820,6 +820,8 @@ index 0000000000000000000000000000000000000000..31f6f2740fbeab729ae107d171cb5407
 +    private boolean mShifted;
 +    private boolean mCapsLock;
 +    private long mLastShiftTime;
++    // Expected editor positions, advanced before our InputConnection calls.
++    // Selection callbacks can describe an older edit or omit composing bounds.
 +    private int mSelectionStart = -1;
 +    private int mSelectionEnd = -1;
 +
@@ -884,14 +886,49 @@ index 0000000000000000000000000000000000000000..31f6f2740fbeab729ae107d171cb5407
 +            final int candidatesEnd) {
 +        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd,
 +                candidatesStart, candidatesEnd);
++        if (isExpectedSelectionUpdate(oldSelStart, oldSelEnd, newSelStart, newSelEnd)) {
++            return;
++        }
++        final boolean unknownSelection = mSelectionStart < 0 || mSelectionEnd < 0;
 +        mSelectionStart = newSelStart;
 +        mSelectionEnd = newSelEnd;
-+        if (mKoreanAutomata.hasComposing()
-+                && (newSelStart != candidatesEnd || newSelEnd != candidatesEnd)) {
++        if (unknownSelection && newSelStart >= 0 && newSelStart == newSelEnd
++                && (candidatesEnd < 0 || newSelEnd == candidatesEnd)) {
++            return;
++        }
++        if (mKoreanAutomata.hasComposing()) {
++            // A real cursor move/selection invalidates our syllable. Reset
++            // first: finishComposingText can itself cause a selection callback.
++            mKoreanAutomata.reset();
 +            final InputConnection connection = getCurrentInputConnection();
 +            if (connection != null) connection.finishComposingText();
-+            mKoreanAutomata.reset();
 +        }
++    }
++
++    private boolean isExpectedSelectionUpdate(final int oldStart, final int oldEnd,
++            final int newStart, final int newEnd) {
++        if (mSelectionStart < 0 || mSelectionEnd < 0 || newStart < 0 || newEnd < 0) {
++            return false;
++        }
++        if (newStart == mSelectionStart && newEnd == mSelectionEnd) return true;
++        if (oldStart == mSelectionStart && oldEnd == mSelectionEnd) return false;
++        // Same bounded-progress heuristic as the full LatinIME connection:
++        // accept delayed updates between their old cursor and our expected one.
++        return oldStart >= 0 && oldEnd >= 0 && newStart == newEnd
++                && (long) (newStart - oldStart) * (mSelectionStart - newStart) >= 0
++                && (long) (newEnd - oldEnd) * (mSelectionEnd - newEnd) >= 0;
++    }
++
++    private int getReplacementStart() {
++        if (mSelectionStart < 0 || mSelectionEnd < 0) return -1;
++        return mKoreanAutomata.hasComposing()
++                ? Math.max(0, mSelectionEnd - mKoreanAutomata.getComposing().length())
++                : Math.min(mSelectionStart, mSelectionEnd);
++    }
++
++    private void expectCursorAfter(final int start, final int length) {
++        if (start < 0) return;
++        mSelectionStart = mSelectionEnd = start + length;
 +    }
 +
 +    @Override
@@ -954,11 +991,20 @@ index 0000000000000000000000000000000000000000..31f6f2740fbeab729ae107d171cb5407
 +        if (!mSymbolsMode && mKoreanMode && !mNoKorean) {
 +            final int jamo = KoreanAutomata.mapTwoSetKey(codePoint, isShiftActive());
 +            if (jamo != 0) {
++                final int start = getReplacementStart();
 +                final KoreanAutomata.Result result = mKoreanAutomata.input(jamo);
-+                if (!result.committed.isEmpty()) {
-+                    connection.commitText(result.committed, 1);
++                connection.beginBatchEdit();
++                try {
++                    if (!result.committed.isEmpty()) {
++                        expectCursorAfter(start, result.committed.length());
++                        connection.commitText(result.committed, 1);
++                    }
++                    expectCursorAfter(start,
++                            result.committed.length() + result.composing.length());
++                    connection.setComposingText(result.composing, 1);
++                } finally {
++                    connection.endBatchEdit();
 +                }
-+                connection.setComposingText(result.composing, 1);
 +                consumeOneShotShift();
 +                return;
 +            }
@@ -970,7 +1016,7 @@ index 0000000000000000000000000000000000000000..31f6f2740fbeab729ae107d171cb5407
 +                && isShiftActive()) {
 +            outputCodePoint = Character.toUpperCase(codePoint);
 +        }
-+        connection.commitText(new String(Character.toChars(outputCodePoint)), 1);
++        commitText(connection, new String(Character.toChars(outputCodePoint)));
 +        consumeOneShotShift();
 +    }
 +
@@ -978,16 +1024,35 @@ index 0000000000000000000000000000000000000000..31f6f2740fbeab729ae107d171cb5407
 +        final InputConnection connection = getCurrentInputConnection();
 +        if (connection == null) return;
 +        if (mKoreanAutomata.hasComposing()) {
++            final int start = getReplacementStart();
 +            final String composing = mKoreanAutomata.backspace();
-+            connection.setComposingText(composing, 1);
-+            if (composing.isEmpty()) connection.finishComposingText();
++            connection.beginBatchEdit();
++            try {
++                expectCursorAfter(start, composing.length());
++                connection.setComposingText(composing, 1);
++                if (composing.isEmpty()) connection.finishComposingText();
++            } finally {
++                connection.endBatchEdit();
++            }
 +            return;
 +        }
 +
 +        final ExtractedText extracted = getExtractedText(connection);
 +        if (extracted != null && extracted.selectionStart != extracted.selectionEnd) {
++            expectCursorAfter(extracted.startOffset
++                    + Math.min(extracted.selectionStart, extracted.selectionEnd), 0);
 +            connection.commitText("", 1);
 +            return;
++        }
++        if (extracted != null && extracted.text != null && extracted.selectionStart > 0
++                && extracted.selectionStart <= extracted.text.length()) {
++            expectCursorAfter(extracted.startOffset + moveOneCodePoint(
++                    extracted.text, extracted.selectionStart, -1), 0);
++        } else if (mSelectionStart >= 0) {
++            final CharSequence before = connection.getTextBeforeCursor(2, 0);
++            final int length = before != null && before.length() > 0
++                    ? Character.charCount(Character.codePointBefore(before, before.length())) : 1;
++            expectCursorAfter(Math.max(0, mSelectionStart - length), 0);
 +        }
 +        if (!connection.deleteSurroundingTextInCodePoints(1, 0)) {
 +            sendDownUpKeyEvent(connection, KeyEvent.KEYCODE_DEL);
@@ -1025,7 +1090,7 @@ index 0000000000000000000000000000000000000000..31f6f2740fbeab729ae107d171cb5407
 +        if (hasAction) {
 +            connection.performEditorAction(action);
 +        } else {
-+            connection.commitText("\n", 1);
++            commitText(connection, "\n");
 +        }
 +    }
 +
@@ -1072,15 +1137,20 @@ index 0000000000000000000000000000000000000000..31f6f2740fbeab729ae107d171cb5407
 +    private void commitText(final String text) {
 +        finishKoreanComposition();
 +        final InputConnection connection = getCurrentInputConnection();
-+        if (connection != null) connection.commitText(text, 1);
++        if (connection != null) commitText(connection, text);
 +        consumeOneShotShift();
++    }
++
++    private void commitText(final InputConnection connection, final String text) {
++        expectCursorAfter(getReplacementStart(), text.length());
++        connection.commitText(text, 1);
 +    }
 +
 +    private void finishKoreanComposition() {
 +        if (!mKoreanAutomata.hasComposing()) return;
++        mKoreanAutomata.reset();
 +        final InputConnection connection = getCurrentInputConnection();
 +        if (connection != null) connection.finishComposingText();
-+        mKoreanAutomata.reset();
 +    }
 +
 +    private void consumeOneShotShift() {
